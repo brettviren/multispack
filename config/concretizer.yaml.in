@@ -1,0 +1,12 @@
+concretizer:
+  # when_possible lets the two ROOT specs coexist in one environment while
+  # still sharing every dependency they can.  `true` would refuse to hold two
+  # `root` nodes; `false` would concretize them independently and share less.
+  unify: when_possible
+  reuse: true
+  targets:
+    # Generic microarchitecture levels (x86_64, _v2, _v3, _v4) only -- never
+    # the specific CPU of whatever machine happens to be doing the build.
+    granularity: generic
+    # Allow concretizing for a target the build host may not itself be.
+    host_compatible: false

@@ -1,0 +1,17 @@
+# multispack validator: sles15
+# SLES 15 SP6 -- proxy for DOE HPC facility login/compute nodes
+#
+# NOTHING is installed here on purpose.  If the ROOT builds under /cvmfs need a
+# package from this distribution, that is a Strategy B failure and the test
+# must show it.
+FROM registry.suse.com/bci/bci-base:15.6
+
+LABEL org.opencontainers.image.title="multispack validator sles15" \
+      org.opencontainers.image.description="SLES 15 SP6 -- proxy for DOE HPC facility login/compute nodes"
+
+COPY tests /opt/multispack/tests
+
+# Uncomment for interactive debugging only -- never for a recorded run:
+# RUN (command -v dnf && dnf -y install binutils) || (command -v apt-get && apt-get update && apt-get install -y binutils) || (command -v zypper && zypper -n install binutils) || (command -v apk && apk add binutils) || true
+
+CMD ["/bin/sh", "/opt/multispack/tests/run-validation.sh"]

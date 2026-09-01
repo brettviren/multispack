@@ -1,0 +1,32 @@
+# multispack DEVEL validator: alma9-devel
+# AlmaLinux 9 (glibc 2.34, the current DUNE production target) + the MINIMAL
+# packages the shipped gcc@15 needs to compile AND link a C/C++ program.
+#
+# The bare validators prove the shipped compiler *runs*.  These -devel validators
+# prove the distribution can *host a build* against it, and document -- one
+# package at a time -- exactly what a downstream application stack must add to a
+# bare install.  Keep the delta minimal and commented: this file IS the manifest
+# of "what alma9 needs to build C++".
+#
+# What is added, and why:
+#   glibc-devel  The C library headers (/usr/include, <features.h> and friends),
+#                the C runtime startup objects (crt1.o, crti.o, crtn.o) and the
+#                libc.so linker script.  Pulls in kernel-headers.  This is the
+#                ENTIRE delta from bare: the compiler driver, the assembler and
+#                linker (gcc is built +binutils), the C++ standard headers and
+#                libstdc++/libgcc_s all ship from /cvmfs, not from the distro.
+#
+# Extension pattern for future stacks: a stack-specific validator (e.g. CUDA
+# Toolkit) should start `FROM localhost/multispack/alma9-devel:<IMG_TAG>` and add
+# ONLY the further packages that stack requires, so each Containerfile stays a
+# precise, reviewable statement of that stack's minimal host requirements.
+FROM docker.io/library/almalinux:9
+
+LABEL org.opencontainers.image.title="multispack devel validator alma9" \
+      org.opencontainers.image.description="AlmaLinux 9 + glibc-devel: minimal C++ build host for the shipped gcc@15"
+
+RUN dnf -y install glibc-devel && dnf clean all
+
+COPY tests /opt/multispack/tests
+
+CMD ["/bin/sh", "/opt/multispack/tests/run-compiler-validation.sh"]

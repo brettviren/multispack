@@ -1,0 +1,34 @@
+# multispack DEVEL validator: debian12-devel
+# Debian 12 bookworm (glibc 2.36) + the MINIMAL packages the shipped gcc@15 needs
+# to compile AND link a C/C++ program.
+#
+# The bare validators prove the shipped compiler *runs*.  These -devel validators
+# prove the distribution can *host a build* against it, and document -- one
+# package at a time -- exactly what a downstream application stack must add to a
+# bare install.  Keep the delta minimal and commented: this file IS the manifest
+# of "what debian12 needs to build C++".
+#
+# What is added, and why:
+#   libc6-dev  The C library headers (/usr/include, <features.h> and friends),
+#              the C runtime startup objects (crt1.o, crti.o, crtn.o) and the
+#              libc.so linker script.  Pulls in linux-libc-dev (kernel headers).
+#              This is the ENTIRE delta from bare: the compiler driver, the
+#              assembler and linker (gcc is built +binutils), the C++ standard
+#              headers and libstdc++/libgcc_s all ship from /cvmfs, not the distro.
+#
+# Extension pattern for future stacks: a stack-specific validator (e.g. CUDA
+# Toolkit) should start `FROM localhost/multispack/debian12-devel:<IMG_TAG>` and
+# add ONLY the further packages that stack requires, so each Containerfile stays a
+# precise, reviewable statement of that stack's minimal host requirements.
+FROM docker.io/library/debian:12-slim
+
+LABEL org.opencontainers.image.title="multispack devel validator debian12" \
+      org.opencontainers.image.description="Debian 12 + libc6-dev: minimal C++ build host for the shipped gcc@15"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY tests /opt/multispack/tests
+
+CMD ["/bin/sh", "/opt/multispack/tests/run-compiler-validation.sh"]

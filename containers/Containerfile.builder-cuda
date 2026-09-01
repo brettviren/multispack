@@ -1,0 +1,51 @@
+# multispack build image: builder-cuda
+# The Strategy B builder + the CUDA Toolkit, so `makenv` can build GPU stacks.
+#
+# This is the build-image analogue of the -devel validators: it starts FROM the
+# already-captured builder (so it keeps Spack, its prerequisites and the glibc
+# 2.28 / manylinux_2_28 floor) and adds ONLY the OS-level packages the CUDA stack
+# needs.  This file IS the manifest of "what a CUDA build host must provide beyond
+# the base builder".  Use it with:  ./multispack.sh makenv --image builder-cuda ...
+#
+# What is added, and why:
+#   cuda-toolkit-XX-Y  nvcc, the CUDA runtime/libraries and their headers under
+#                      /usr/local/cuda.  This is the *toolkit* metapackage, NOT
+#                      the `cuda` metapackage: it deliberately does NOT pull the
+#                      NVIDIA kernel driver.  libcuda.so is driver-bound and can
+#                      only ever come from the host at runtime (host-injected),
+#                      exactly like libGL/verbs/PMI -- see PLAN.md sections 1 & 7.
+#
+# A Spack environment built here should declare CUDA as an external so Spack uses
+# this toolkit rather than downloading its own, e.g. in the env's spack.yaml:
+#   packages:
+#     cuda:
+#       externals:
+#       - spec: cuda@12.6
+#         prefix: /usr/local/cuda
+#       buildable: false
+# `makenv`'s gate C then confirms /usr/local/cuda actually exists in the image.
+#
+# BUILDER_IMG is injected by multispack.sh (localhost/multispack/builder:<tag>).
+# CUDA_PKG / CUDA_REPO can be overridden with `podman build --build-arg ...` for a
+# different CUDA release; keep the glibc floor by always staying FROM the builder.
+ARG BUILDER_IMG=localhost/multispack/builder:1
+FROM ${BUILDER_IMG}
+
+LABEL org.opencontainers.image.title="multispack builder-cuda" \
+      org.opencontainers.image.description="Strategy B builder + CUDA Toolkit (no driver) for GPU makenv builds"
+
+ARG CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+ARG CUDA_PKG=cuda-toolkit-12-6
+
+RUN set -eux; \
+    curl -fsSL "${CUDA_REPO}" -o /etc/yum.repos.d/cuda-rhel8.repo; \
+    dnf -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs install "${CUDA_PKG}"; \
+    dnf clean all; rm -rf /var/cache/dnf; \
+    test -e /usr/local/cuda/bin/nvcc
+
+# Put nvcc on PATH and expose the toolkit location.  The builder already sets the
+# rest of PATH and the Spack environment variables; we only prepend CUDA here.
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+CMD ["/bin/bash", "-l"]

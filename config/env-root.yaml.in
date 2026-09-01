@@ -1,0 +1,21 @@
+spack:
+  # One environment holding every ROOT flavour, so that a single concretization
+  # decides what is shared and the lockfile records it.
+  specs:
+@SPECS@
+
+  concretizer:
+    unify: when_possible
+    reuse: true
+
+  packages:
+    all:
+      require:
+      - target=@MULTISPACK_TARGET@
+      variants: cxxstd=@BASE_CXXSTD@
+
+  # No environment view: two `root` packages would collide in a merged view.
+  # phase-deploy.sh writes a per-cxxstd env.sh from the concrete prefixes
+  # instead, which also proves that $ORIGIN rpaths -- not LD_LIBRARY_PATH --
+  # are doing the work at runtime.
+  view: false

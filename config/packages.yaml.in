@@ -1,0 +1,34 @@
+# Site-scope package policy.
+#
+# The Strategy B contract in three lines:
+#   * target=x86_64_v3      -- the ISA floor
+#   * glibc is external     -- the host provides libc, and only libc
+#   * cxxstd=17 everywhere  -- so C++17 and C++23 ROOT can share dependencies
+#
+# Note what is NOT here: no `spack external find` results.  Apart from libc and
+# the bootstrap compiler, nothing is taken from the distribution.  That is the
+# whole point, and it is what makes the resulting tree portable.
+packages:
+  all:
+    require:
+    - target=@MULTISPACK_TARGET@
+    # Applied only to packages that actually define a cxxstd variant.
+    variants: cxxstd=@BASE_CXXSTD@
+
+  glibc:
+    # Strategy B: use the base image's glibc (2.28 on AlmaLinux 8).  Spack
+    # detects it automatically as the `libc` virtual.  Building it would be
+    # Strategy A.
+    buildable: false
+
+  # --- glibc 2.28 pthread hazard ----------------------------------------------
+  # AlmaLinux 8 keeps pthread in a separate libpthread; it was folded into libc
+  # only in glibc 2.34.  Packages that call pthread_* but assume the newer merged
+  # layout fail to LINK here ("undefined reference to pthread_create", ...) unless
+  # -pthread is forced onto the link.  On a newer-glibc host the same build just
+  # works, which is why upstream recipes miss it.  Add packages here as they
+  # surface; hdf5's mirror-VFD utilities (+tools) are the first known case.
+  # (Flags go through `require:` -- a bare `ldflags:` key is not valid schema.)
+  hdf5:
+    require:
+    - 'ldflags=-pthread'

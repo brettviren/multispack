@@ -1,0 +1,181 @@
+# Independent Spack environment: two-stage gcc@15 + app stack, coherent gcc-runtime.
+#
+# multispack copy of xerosere's extern/envs/gcc15/spack.yaml.  The ONLY change
+# from the original is the `repos:` block: xerosere's $spack-relative local paths
+# (extern/repos/, managed by mr/.mrconfig) are replaced with git repos pinned by
+# commit, so this file is self-contained and reproducible -- Spack clones each
+# repo into its cache at concretize time and `makenv` needs no --repos mount.
+# Re-sync from xerosere and re-pin the commits when the recipes move.
+#
+# Design notes (verified against Spack 1.2.2):
+#  * gcc-runtime tracks the compiler that BUILT a node. The host toolchain is
+#    gcc@12.2.0 (Debian bookworm), which Spack detects as an external compiler;
+#    stage-1 gcc@15 (built by that host gcc@12.2.0) carries gcc-runtime@12.2.0,
+#    and stage-2 gcc@15 (built BY stage-1) carries gcc-runtime@15. The two groups
+#    (bootstrap -> main) express that, and 'needs:' makes stage-1 available as the
+#    %gcc@15 compiler for the main group.
+#  * Downstream groups 'needs: [main]' so they build with the stage-2 (main)
+#    gcc@15 and reuse its gcc-runtime@15 -- never the throwaway bootstrap gcc.
+#  * The bootstrap stage (and gcc's host-built lib deps) still pull
+#    gcc-runtime@12.2.0 into the STORE -- unavoidable in 1.2.x because per-group
+#    'override:' currently crashes the solver. It does NOT pollute the VIEW:
+#    Spack keeps only the newest runtime (environment.py:_exclude_duplicate_runtimes).
+#
+# Repos: precedence is "first wins". 'wirecell' is listed FIRST so it overrides
+# commonly-named packages from fnal_art / phlex / builtin (builtin is implicit,
+# lowest).  Pinned by commit for a reproducible build; switch a `commit:` to a
+# `branch:` (e.g. master/develop/main) to track upstream instead.
+spack:
+  repos:
+    wirecell:
+      git: https://github.com/WireCell/wire-cell-spack.git
+      commit: fb106af6a49333f3f4e02411f973229a3711b766
+      paths: [spack_repo/wirecell]
+    fnal_art:
+      git: https://github.com/FNALssi/fnal_art.git
+      commit: 44d872d38b498f07e1a2fe3b4915b6ff04f02c34
+      paths: [spack_repo/fnal_art]
+    phlex:
+      git: https://github.com/brettviren/phlex-spack-recipes.git
+      commit: 74f70f630b6ca7f33c4f9424af82de54e7796543
+      paths: [spack_repo/phlex]
+    edep_simphony:
+      git: https://github.com/WireCell/edep-simphony-spack.git
+      commit: 167ce10db54dc7590704d51b71b8f429036db70f
+      paths: [edep_simphony/spack_repo/edep_simphony]
+
+  specs:
+  - group: bootstrap
+    explicit: false          # implicit -> GC-eligible; the throwaway stage-1
+    specs:
+    - gcc@15                  # built by host gcc@12.2.0; runtime = gcc-runtime@12.2.0
+
+  # gcc@12 lives in its own group: with unify:true two "gcc" package specs cannot
+  # share a group (one version per package), so the compiler that builds py-torch
+  # is built apart from the stage-2 gcc@15. Built by host gcc; used as %gcc@12
+  # (its only consumer is the py-torch spec below -- nvcc needs a <=gcc@14 host).
+  - group: gcc12
+    explicit: false          # implicit -> GC-eligible; build dep only
+    specs:
+    - gcc@12
+
+  - group: main
+    needs: [bootstrap]
+    specs:
+    - gcc@15 %gcc@15          # rebuilt by stage-1; runtime = gcc-runtime@15
+    - libelf %gcc@15          # built by stage-2; shares that gcc-runtime@15
+
+  - group: apps
+    needs: [main, gcc12]     # C++23 apps on stage-2 gcc@15; py-torch on gcc@12
+    specs:
+    # FIXME: when xerosere is built by Spack, +arrow and arrow will be included.
+    # For now, while we only do local dev builds, we add root +arrow explicitly as a way to get arrow included.
+    # %gcc@12 (the ONLY node not on gcc@15): nvcc rejects a gcc@15 host for
+    # CUDA 12.x, so py-torch builds with gcc@12 and links the gcc@15 shared
+    # layer. WCT links this as its libtorch via +torch (see WCT recipe note).
+    # ~mkldnn: py-torch's recipe does `depends_on("mkl", when="+mkldnn")`, and the
+    # `mkl` virtual is ONLY provided by the proprietary intel-oneapi-mkl -- which
+    # then wins blas/lapack for the whole group under unify:true (overriding the
+    # openblas preference) and drags a huge closed binary (with a broken symlink,
+    # see the view exclude below) into the portable stack.  Dropping MKLDNN keeps
+    # MKL out entirely; py-torch uses openblas.  Trade-off: no oneDNN CPU-op
+    # acceleration -- acceptable for a +cuda (GPU) build.
+    - py-torch +cuda ~distributed ~mkldnn cuda_arch=89 %gcc@12
+    - root +arrow cxxstd=23 %gcc@15
+    # Some versions are set manually to force local upgrade over past concretizations
+    - phlex@0.3.2 +form  cxxstd=23 %gcc@15
+    - wire-cell-data@0.2.0
+    # ~cuda (explicit): WCT compiles no CUDA of its own, so it stays gcc@15/C++23
+    # and just links the gcc@12-built py-torch+cuda. +cuda here would make WCT an
+    # nvcc CudaPackage and reintroduce the gcc@15/CUDA-12 conflict.
+    - wire-cell-toolkit@master +hdf +root +torch ~cuda cxxstd=23 %gcc@15
+    - hepmc3 +rootio
+    - edepsim@4.3.0 cxxstd=23 %gcc@15
+    # This version is tied to the host's nvidia driver version!
+    - optix-dev@8.1.0
+    - simphony@0.7.0 cxxstd=23 %gcc@15
+    - edep-simphony-plugin@master %gcc@15
+    - cmake@3.31
+    - ninja
+
+  packages:
+    # No global gcc@12 floor.  CUDA 12.x's nvcc refuses a gcc@15 host
+    # (CudaPackage: conflicts %gcc@15: when %cuda@:12.9), so py-torch+cuda -- an
+    # nvcc-compiled CudaPackage -- cannot build with gcc@15.  Rather than floor
+    # the WHOLE shared layer to gcc@12 (which forks a second, gcc-runtime@12 copy
+    # of every low-level lib and makes the flat view collide), we pin ONLY
+    # py-torch to %gcc@12 (see its spec above).  Everything else stays on the
+    # stage-2 gcc@15 / gcc-runtime@15, so each shared lib is a single node and the
+    # view is clean.  py-torch (gcc@12) links those gcc@15-built libs against the
+    # deduped gcc-runtime@15 -- the one gcc@12->gcc@15 edge this design accepts,
+    # confined to py-torch alone.  See extern/envs/gccxx for the fuller writeup.
+    # Default the Jsonnet engine to go-jsonnet (pure-Go, much faster on large
+    # configs). `libjsonnet` is a virtual it provides (building the libjsonnet++
+    # wrapper against its engine) alongside the C/C++ `jsonnet` package; set the
+    # provider below to `jsonnet` to fall back to the C engine.
+    all:
+      # Build the whole stack for the x86_64_v3 microarchitecture baseline
+      # (SSE4.2/AVX/AVX2/BMI/FMA). The host is zen4 (x86_64_v4-capable) but v3
+      # keeps the binaries portable across the cluster's older nodes while still
+      # enabling the vector ISA every modern package benefits from. This is a hard
+      # 'require' (not a 'target:' preference): the concretizer's default "pick the
+      # newest host microarch" objective outranks a soft preference, so only a
+      # requirement pins the whole DAG. The any_of allows the generic x86_64 family
+      # as a fallback -- the solver maximizes microarch within the allowed set, so
+      # every buildable node takes x86_64_v3 while binary/external nodes that only
+      # ship generic x86_64 (cuda, glibc, the host bootstrap gcc) stay satisfiable.
+      require:
+      - any_of:
+        - target=x86_64_v3
+        - target=x86_64
+      providers:
+        libjsonnet: [go-jsonnet]
+        # Use OpenBLAS for BLAS/LAPACK. The default provider pulled
+        # intel-oneapi-mkl, whose offline installer 404s on the Spack mirror and
+        # fails SSL verification against Intel's host -- and it is a huge
+        # proprietary binary. OpenBLAS builds from source and is a fully
+        # supported py-torch BLAS backend.
+        blas: [openblas]
+        lapack: [openblas]
+
+    # Guard: MKL is proprietary, huge, and ships a self-referential symlink (see
+    # the view exclude).  With py-torch ~mkldnn nothing pulls the `mkl` virtual,
+    # so forbid building/using intel-oneapi-mkl -- if some future spec re-requests
+    # it, concretization fails LOUDLY here instead of silently pulling it back in.
+    intel-oneapi-mkl:
+      buildable: false
+
+  config:
+    # Pad the install tree so binaries are relocatable (long, fixed-length RPATHs
+    # that can be rewritten in place for build caches / prefix moves). The store
+    # root ($spack/opt/spack) is 49 chars; 128 leaves ample room to pad into.
+    install_tree:
+      padded_length: 128
+
+  concretizer:
+    unify: true               # within a group; one gcc-runtime@15 per group
+
+  view:
+    default:
+      root: view              # -> extern/envs/gcc15/view
+      group: [main, apps]     # expose toolchain + apps; bootstrap stays out
+      link: all               # roots + transitive run+link deps (headers/libs for dev)
+      # multispack: intel-oneapi-mkl (pulled as a build+link dep of root/py-torch/
+      # py-numpy/py-scipy despite the openblas preference) ships a self-referential
+      # symlink -- tbb/2023.0/lib/gcc4.8 -> ..//lib -- that makes an infinite
+      # directory loop.  Linking it into the view breaks `spack env list` and any
+      # tree walk (find/rsync/tar).  Exclude it: apps still link libmkl via rpath;
+      # nothing needs it on PATH or in the merged include/lib.  (Better long-term:
+      # keep MKL out of the DAG entirely -- see the openblas/fftw-api note above.)
+      exclude: ['intel-oneapi-mkl']
+      # NOTE: no 'exclude' is currently needed. Historically zstd and zlib-ng
+      # could appear as TWO builds -- a host-compiler copy (dragged into the
+      # closure by the stage-2 gcc@15's own LTO/link deps) plus a separate
+      # app-layer copy -- which collide in the flat view (both project to the same
+      # prefix: a view-creation error), so they were excluded by host compiler
+      # version. With the current toolchain the host compiler IS the app-layer
+      # gcc@12.2.0, so each of zstd/zlib-ng resolves to a SINGLE build and there
+      # is nothing to exclude (verified: one node each in the main+apps closure).
+      # If a future host/compiler change re-forks them, restore an 'exclude:'
+      # keyed to the DUPLICATE copy's compiler -- never to the app-layer gcc@12.2.0,
+      # which is the copy you want to keep in the view.

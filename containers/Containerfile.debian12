@@ -1,0 +1,17 @@
+# multispack validator: debian12
+# Debian 12 bookworm, glibc 2.36
+#
+# NOTHING is installed here on purpose.  If the ROOT builds under /cvmfs need a
+# package from this distribution, that is a Strategy B failure and the test
+# must show it.
+FROM docker.io/library/debian:12-slim
+
+LABEL org.opencontainers.image.title="multispack validator debian12" \
+      org.opencontainers.image.description="Debian 12 bookworm, glibc 2.36"
+
+COPY tests /opt/multispack/tests
+
+# Uncomment for interactive debugging only -- never for a recorded run:
+# RUN (command -v dnf && dnf -y install binutils) || (command -v apt-get && apt-get update && apt-get install -y binutils) || (command -v zypper && zypper -n install binutils) || (command -v apk && apk add binutils) || true
+
+CMD ["/bin/sh", "/opt/multispack/tests/run-validation.sh"]

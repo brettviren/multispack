@@ -1,0 +1,29 @@
+# Site-scope config for the multispack Strategy B install area.
+# Installed to $SPACK_ROOT/etc/spack/config.yaml by phase-bootstrap.sh.
+config:
+  install_tree:
+    root: @CVMFS_ROOT@/opt
+    # Flat projection: every prefix is a sibling, so store-relative $ORIGIN
+    # rpaths are uniformly '$ORIGIN/../../<name>-<version>-<hash>/lib'.
+    # It also keeps the distro/compiler out of the install path entirely.
+    projections:
+      all: '{name}-{version}-{hash}'
+    # Padding lets the tree be relocated to a SHORTER path later, because ELF
+    # string edits can only shrink.  Set to 0 to disable (shorter paths, easier
+    # debugging, but relocation is then limited to equal-or-longer paths).
+    padded_length: @PADDED_LENGTH@
+
+  # Everything volatile lives on the work volume, everything reusable on the
+  # cache volume.  Neither ends up inside the shipped tree.
+  build_stage:
+  - /multispack/work/stage
+  test_stage: /multispack/work/test
+  source_cache: /multispack/cache/source
+  misc_cache: /multispack/work/misc
+
+  build_jobs: @BUILD_JOBS@
+  ccache: false
+  checksum: true
+  verify_ssl: true
+  # We use an unsigned local buildcache; do not nag about it.
+  suppress_gpg_warnings: true

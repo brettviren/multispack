@@ -1,0 +1,17 @@
+# multispack validator: alpine
+# Alpine 3.21, musl libc -- EXPECTED FAIL, marks the Strategy B boundary
+#
+# NOTHING is installed here on purpose.  If the ROOT builds under /cvmfs need a
+# package from this distribution, that is a Strategy B failure and the test
+# must show it.
+FROM docker.io/library/alpine:3.21
+
+LABEL org.opencontainers.image.title="multispack validator alpine" \
+      org.opencontainers.image.description="Alpine 3.21, musl libc -- EXPECTED FAIL, marks the Strategy B boundary"
+
+COPY tests /opt/multispack/tests
+
+# Uncomment for interactive debugging only -- never for a recorded run:
+# RUN (command -v dnf && dnf -y install binutils) || (command -v apt-get && apt-get update && apt-get install -y binutils) || (command -v zypper && zypper -n install binutils) || (command -v apk && apk add binutils) || true
+
+CMD ["/bin/sh", "/opt/multispack/tests/run-validation.sh"]

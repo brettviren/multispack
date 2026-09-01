@@ -1,0 +1,4 @@
+mirrors:
+  multispack:
+    url: file:///multispack/cache/buildcache
+    signed: false
