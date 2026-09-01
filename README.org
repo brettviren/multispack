@@ -1,0 +1,32 @@
+#+title: multispack = manylinux + Spack
+
+This follows the lead of manylinux which is used to build the shared Python ecosystem of binary packages.
+
+The basic idea of multispack:
+
+1. Pick a "base glibc" version older or equal to the version of the target set of Linux distros.
+2. Define a minimal "base" container with a Linux distro providing the "base glibc".
+3. Perform a one-time "bootstrap ladder" to produce a "builder" container with Spack-built compilers and no OS compilers.
+4. Use "builder" container as a base for all Spack builds.  
+
+This idea works because glibc guarantees forward-compatibility.  Code compiled
+against old glibc can run on new glibc.  A good "base glibc" currently is 2.28
+which is what is provided by Alma 8 and manylinux and supports Debian 12, 13,
+Alma 8 and 9 and SLES 15 (NERSC's distro) and is expected to support many future
+and different distros.
+
+The build ladder:
+#+begin_example
+  OS compiler -> Spack-built compilers -> Spack-built compilers
+#+end_example
+
+The use of the "builder" container is not strictly needed but:
+- Protects against eventual end-of-life of the "base glibc" provider.  We can run Alma 8 in container long after it is "illegal" to run it as a host.
+- Is "maximally hermetic" in that the minimalness and container definition precisely defines the basis of all our software builds without unintentional "leakage" of uncaptured OS-specifics.
+- Enables many benefits we can exploit (CI, multi-computer parallel builds, user-build request submission mechanisms).
+
+This "multispack" package is a proof of concept.  The "multispack.sh" script provides a driver for exercising and validating the idea.  For initial help:
+
+#+begin_example
+$ ./multispack.sh
+#+end_example
