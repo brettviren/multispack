@@ -1,0 +1,11 @@
+# pthread symbol-version demo: compile test.c against AlmaLinux 10's glibc (2.39).
+# Even here the pthread symbols required are @GLIBC_2.34, not @GLIBC_2.39 --
+# pthread's version node froze at the 2.34 merge and has not moved since.  So an
+# AL10-built pthread binary still runs on AL9, and (like AL9) fails on AL8.  This
+# shows the cliff is at 2.34, not "every new release".  See README.md.
+ARG BASE=docker.io/library/almalinux:10
+FROM ${BASE}
+RUN dnf -y install gcc glibc-devel binutils && dnf clean all
+COPY test.c /src/test.c
+RUN gcc -O2 -pthread /src/test.c -o /pthread-test
+CMD ["/pthread-test"]

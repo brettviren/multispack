@@ -1,0 +1,11 @@
+# pthread symbol-version demo: compile test.c against AlmaLinux 9's glibc (2.34).
+# 2.34 is the release that MERGED libpthread into libc, minting new
+# pthread_*@GLIBC_2.34 symbols.  A binary built here requires GLIBC_2.34, so it
+# runs on AL9 and AL10 (>= 2.34) but NOT on AL8 (2.28) -- the real portability
+# cliff, and the OPPOSITE direction from the criticism.  See README.md.
+ARG BASE=docker.io/library/almalinux:9
+FROM ${BASE}
+RUN dnf -y install gcc glibc-devel binutils && dnf clean all
+COPY test.c /src/test.c
+RUN gcc -O2 -pthread /src/test.c -o /pthread-test
+CMD ["/pthread-test"]

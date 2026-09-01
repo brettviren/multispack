@@ -1,0 +1,11 @@
+# pthread symbol-version demo: compile test.c against AlmaLinux 8's glibc (2.28).
+# On glibc < 2.34 pthread lives in a SEPARATE libpthread, so the link needs
+# -pthread -- the exact build-time requirement multispack hit for HDF5.  The
+# resulting binary requires the ancient pthread_*@GLIBC_2.2.5 symbols, which are
+# present on essentially every glibc, so it runs on AL8, AL9 and AL10 alike.
+ARG BASE=docker.io/library/almalinux:8
+FROM ${BASE}
+RUN dnf -y install gcc glibc-devel binutils && dnf clean all
+COPY test.c /src/test.c
+RUN gcc -O2 -pthread /src/test.c -o /pthread-test
+CMD ["/pthread-test"]

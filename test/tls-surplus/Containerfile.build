@@ -1,0 +1,18 @@
+# Reproducible build recipe for the static-TLS-surplus probe and its libraries.
+#
+# Build once on the oldest glibc (AlmaLinux 8) so the artifacts run on AL8/9/10;
+# the phenomenon under test is a property of the glibc the probe RUNS under, not
+# the one it was built with.  run.sh compiles the same way (via build.sh) without
+# committing an image, but this file is the canonical, standalone recipe:
+#
+#   podman build -f Containerfile.build -t tls-surplus-build .
+#   podman create --name x tls-surplus-build && podman cp x:/tls ./tls && podman rm x
+#   # then run ./tls/probe under almalinux:8, :9, :10 (see run.sh / README.md)
+ARG BASE=docker.io/library/almalinux:8
+FROM ${BASE}
+ARG N=64
+ARG TLS_BYTES=512
+RUN dnf -y install gcc glibc-devel && dnf clean all
+COPY tlslib.c probe.c build.sh /src/
+RUN sh /src/build.sh /src /tls "${N}" "${TLS_BYTES}"
+CMD ["/tls/probe", "/tls", "ie-lib", "64"]

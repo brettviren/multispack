@@ -398,6 +398,29 @@ cmd_makenv() {
         "$img" /opt/multispack/bin/phase-makenv.sh
 }
 
+# sbom [--format cyclonedx|spdx|text] <env>
+# Emit a Software Bill of Materials for an environment (managed name, env dir, or
+# a name under /cvmfs/.../env) and flag the CVE-prone leaves.  Read-only.
+cmd_sbom() {
+    local fmt=cyclonedx env=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--format) fmt="${2:?--format needs a value}"; shift 2 ;;
+            -h|--help)
+                echo "usage: multispack.sh sbom [--format cyclonedx|spdx|text] <env-name-or-dir>"
+                return 0 ;;
+            -*) die "sbom: unknown option: $1" ;;
+            *)  if [ -z "$env" ]; then env="$1"; else die "sbom: unexpected argument: $1"; fi; shift ;;
+        esac
+    done
+    [ -n "$env" ] || env="root"   # default to the ROOT-pipeline environment
+    mapfile -t _v < <(vol_args ro)
+    mapfile -t _e < <(env_args)
+    "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" \
+        -e "SBOM_ENV=${env}" -e "SBOM_FORMAT=${fmt}" \
+        "$BUILDER_IMG" /opt/multispack/bin/phase-sbom.sh
+}
+
 cmd_report() {
     mapfile -t _v < <(vol_args rw)
     "$ENGINE" run --rm "${_v[@]}" "$BUILDER_IMG" \
@@ -513,6 +536,10 @@ Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine
 
 Reporting and utility:
+  sbom [--format cyclonedx|spdx|text] <env>
+                     write a bill of materials (meta/sbom-<env>.*) from an
+                     environment's spack.lock and flag the CVE-prone leaves;
+                     feed it to grype/trivy/osv-scanner
   report             merge meta/*.json into meta/report.html
   status             one-line summary of every phase that has run
   shell [image]      interactive shell with the volumes mounted (default builder)
@@ -558,6 +585,7 @@ main() {
                 done
             fi ;;
         makenv)     cmd_makenv "$@" ;;
+        sbom)       cmd_sbom "$@" ;;
         report)     cmd_report ;;
         status)     cmd_status ;;
         shell)      cmd_shell "$@" ;;
