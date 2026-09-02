@@ -1,0 +1,4 @@
+# wirecell: the Wire-Cell Toolkit; the larsoft group `needs:` it (larwirecell).
+definitions:
+- wirecell:
+  - wire-cell-toolkit %build_compiler

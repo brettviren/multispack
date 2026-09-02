@@ -1,0 +1,53 @@
+# multispack test bed 'largroups': a FACTORED, grouped LArSoft stack capturing the
+# intent of reference/larsoft-release-configs/unified-spack.yaml (art + nusofthep +
+# larsoft), structured for `spack concretize && spack install`.
+#
+# Factoring (Spack `include:` merges config sections -- definitions/packages/repos --
+# but NOT the specs: list, so the group DAG lives here while contents/versions factor
+# out):
+#   repos.yaml / repos-dev.yaml  -- recipe repos (git URLs / local clones)
+#   packages.yaml                -- ALL version+variant pins (authoritative)
+#   groups/*.yaml                -- per-group membership as definitions:
+#   this file                    -- the group:/needs: DAG (structure) + config + view
+#
+# Structure (needs DAG):  base <- {wirecell, art};  art <- nusoft;  {nusoft,wirecell} <- larsoft.
+# base builds one python/root/boost and every group reuses them via needs:.
+spack:
+  config:
+    deprecated: true
+  toolchains:
+    build_compiler:
+    - spec: '%c=gcc@12'
+      when: '%c'
+    - spec: '%cxx=gcc@12'
+      when: '%cxx'
+    - spec: '%fortran=gcc@12'
+      when: '%fortran'
+  concretizer:
+    compiler_mixing: false
+    unify: true
+    reuse: false
+  include:
+  - repos.yaml
+  - packages.yaml
+  - groups/base.yaml
+  - groups/wirecell.yaml
+  - groups/art.yaml
+  - groups/nusoft.yaml
+  - groups/larsoft.yaml
+  specs:
+  - group: base
+    specs: [$base]
+  - group: wirecell
+    needs: [base]
+    specs: [$wirecell]
+  - group: art
+    needs: [base]
+    specs: [$art]
+  - group: nusoft
+    needs: [art]
+    specs: [$nusoft]
+  - group: larsoft
+    needs: [nusoft, wirecell]
+    specs: [$larsoft]
+  view: false

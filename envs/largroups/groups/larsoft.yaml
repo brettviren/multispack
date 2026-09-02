@@ -1,0 +1,23 @@
+# larsoft: the LArSoft layer, built on nusoft + wirecell (was st_larsoft_2).
+definitions:
+- larsoft:
+  - larana %build_compiler
+  - larcore %build_compiler
+  - larcorealg %build_compiler
+  - larcoreobj %build_compiler
+  - lardata %build_compiler
+  - lardataalg %build_compiler
+  - lardataobj %build_compiler
+  - lareventdisplay %build_compiler
+  - larevt %build_compiler
+  - larexamples %build_compiler
+  - larg4 %build_compiler
+  - larpandora %build_compiler
+  - larpandoracontent %build_compiler
+  - larreco %build_compiler
+  - larrecodnn %build_compiler
+  - larsim %build_compiler
+  - larsimdnn %build_compiler
+  - larsimrad %build_compiler
+  - larwirecell %build_compiler
+  - larsoft %build_compiler

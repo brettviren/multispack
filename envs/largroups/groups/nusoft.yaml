@@ -1,0 +1,14 @@
+# nusoft: the NuSoftHEP layer, built on art (was st_larsoft_1).
+definitions:
+- nusoft:
+  - dk2nudata %build_compiler
+  - dk2nugenie %build_compiler
+  - geant4 %build_compiler
+  - geant4reweight %build_compiler
+  - nuevdb %build_compiler
+  - nufinder
+  - nug4 %build_compiler
+  - nugen %build_compiler
+  - nurandom %build_compiler
+  - nusimdata %build_compiler
+  - nutools %build_compiler

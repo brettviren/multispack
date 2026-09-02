@@ -1,0 +1,238 @@
+# Authoritative version/variant pins.  packages: is global config: a require here
+# constrains that package in EVERY group's solve, so this is the single place that
+# pins versions -- decoupled from the group structure (spack.yaml) and membership
+# (groups/*.yaml).  python is pinned to the 3.11 series on purpose: a package that
+# needs <=3.10 (e.g. py-tensorflow@2.10) will fail here rather than fork a 2nd python.
+packages:
+  # Shared foundation libraries pinned to ONE version so every group's solve
+  # agrees (per-group unify + opportunistic needs-reuse otherwise let e.g.
+  # wire-cell-toolkit take boost@1.89/eigen@5.0 while the art/lar stack takes
+  # boost@1.82/eigen@3.4 -> two builds that collide in a combined view).
+  boost:
+    require:
+    - '@=1.82.0'
+  eigen:
+    require:
+    - '@=3.4.1'
+  art:
+    require:
+    - '@=3.14.04'
+  art-root-io:
+    require:
+    - '@=1.13.06'
+  canvas:
+    require:
+    - '@=3.16.04'
+  canvas-root-io:
+    require:
+    - '@=1.13.06'
+  cetlib:
+    require:
+    - '@=3.18.02'
+  cetlib-except:
+    require:
+    - '@=1.09.01'
+  cetmodules:
+    require:
+    - '@3'
+  critic:
+    require:
+    - '@=2.13.06'
+  messagefacility:
+    require:
+    - '@=2.10.05'
+  fhicl-cpp:
+    require:
+    - '@=4.18.04'
+  gallery:
+    require:
+    - '@=1.22.06'
+  ifdh-art:
+    require:
+    - '@=2.17.08'
+  hep-concurrency:
+    require:
+    - '@=1.09.02'
+  clhep:
+    require:
+    - '@=2.4.7.1'
+  ifbeam:
+    require:
+    - '@=2.6.3'
+  ifdhc:
+    require:
+    - '@=2.8.0'
+  ifdhc-config:
+    require:
+    - '@=2.8.0'
+  nucondb:
+    require:
+    - '@=2.6.3'
+  root:
+    require:
+    - '@=6.28.12'
+    - +xrootd
+    # root +opengl pulls mesa +llvm, which needs a `libllvm` provider.  The
+    # concretizer defaults to llvm-amdgpu (huge, AMD-GPU-only, and fails to build
+    # against glibc-2.28's libstdc++).  Force mesa's libllvm edge to plain `llvm`.
+    # (A `providers: libllvm: [llvm]` preference is too weak to override; and mesa
+    # ~llvm is not a workaround -- FNAL's builtin-fork mesa recipe still emits
+    # gallium `swrast`, which requires llvmpipe -> LLVM, failing a different way.)
+  mesa:
+    require:
+    - ^[virtuals=libllvm] llvm
+  tbb:
+    require:
+    - builtin.intel-oneapi-tbb
+  artdaq-core:
+    require:
+    - '@v3_11_01'
+    - ~bundle
+  cry:
+    require:
+    - '@=1.7'
+  geant4:
+    require:
+    - '@11.2.2'
+    - ~qt
+    - build_type=RelWithDebInfo
+    - generator=ninja
+    - cxxstd=17
+  nug4:
+    require:
+    - '@=1.17.03'
+  nugen:
+    require:
+    - '@=1.23.04'
+  nurandom:
+    require:
+    - '@=1.11.06'
+  nusimdata:
+    require:
+    - '@=1.29.03'
+  nutools:
+    require:
+    - '@=3.22.01'
+    # py-torch / py-tensorflow PEELED OUT of this solve (see header note 2).
+    # If pulled in as a transitive dep they concretize with default (~cuda)
+    # variants; the +cuda cuda_arch=80 GPU build belongs in a separate env.
+  nufinder:
+    require:
+    - '@1.03.01'
+  larana:
+    require:
+    - '@=10.02.09'
+  larcore:
+    require:
+    - '@=10.00.06'
+  larcorealg:
+    require:
+    - '@=10.00.06'
+  larcoreobj:
+    require:
+    - '@=10.00.03'
+  lardata:
+    require:
+    - '@=10.00.19'
+  lardataalg:
+    require:
+    - '@=10.02.04'
+  lardataobj:
+    require:
+    - '@=10.05.03'
+  lareventdisplay:
+    require:
+    - '@=10.01.09'
+  larevt:
+    require:
+    - '@=10.00.22'
+  larexamples:
+    require:
+    - '@=10.02.04'
+  larg4:
+    require:
+    - '@=10.20.06'
+  larpandora:
+    require:
+    - '@=10.05.01'
+  larpandoracontent:
+    require:
+    - '@=05.04.00'
+  larreco:
+    require:
+    - '@=10.06.09'
+  larrecodnn:
+    require:
+    - '@=10.05.01'
+  larsim:
+    require:
+    - '@=10.21.00'
+  larsimdnn:
+    require:
+    - '@=10.02.06'
+  larsimrad:
+    require:
+    - '@=10.01.08'
+  larsoft:
+    require:
+    - '@=10.24.00'
+  larwirecell:
+    require:
+    - '@=10.04.00'
+  larvecutils:
+    require:
+    - '@=09.04.04'
+  larfinder:
+    require:
+    - '@develop'
+  pandorapfa:
+    require:
+    - '@=5.1.0'
+  pandorasdk:
+    require:
+    - '@=5.0.0'
+  artg4tk:
+    require:
+    - '@=13.0.1'
+  marley:
+    require:
+    - '@=1.2.1'
+  wire-cell-toolkit:
+    require:
+    - '@=0.37.1'
+  all:
+    require:
+      # Pin the microarch to the v3 floor.  This MUST be the any_of enumeration,
+      # NOT a bare `target=x86_64_v3`: a bare require is *satisfied* by x86_64_v4
+      # (a superset), so the concretizer optimizes fresh builds up to the v4 host
+      # and ships AVX-512 binaries that break v3-only hosts.  any_of enumerates
+      # the allowed targets (v3 preferred, base x86_64 fallback) and excludes v4.
+      # (Same form multispack uses everywhere, e.g. the xerosere env; it is NOT a
+      # concretizer-hardness source -- compiler_mixing:false is what fixed that.)
+    - any_of:
+      - target=x86_64_v3
+      - target=x86_64
+    providers:
+      libc:
+      - glibc
+      zlib-api:
+      - zlib
+      libllvm:
+      - llvm
+    variants:
+    - generator=ninja
+    - build_type=Release
+    - cxxstd=17
+  python:
+    require: ['@3.11']
+  cuda:
+    require:
+    - '@12.6'
+  grpc:
+    require:
+    - build_type=RelWithDebInfo
+    - generator=ninja
+    - cxxstd=17
+  trace:
+    require:
+    - '@:v3_23_00'

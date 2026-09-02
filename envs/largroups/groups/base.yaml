@@ -1,0 +1,9 @@
+# base: big-name, widely-shared packages built ONCE here so every higher group
+# `needs: [base]` and reuses these exact builds -- locking one python/root/boost
+# across the whole stack.  (torch/tensorflow are deliberately NOT here: they are
+# used only by the DNN lar packages and py-tensorflow@2.10 conflicts with py3.11.)
+definitions:
+- base:
+  - python %build_compiler
+  - root %build_compiler
+  - boost %build_compiler

@@ -398,6 +398,75 @@ cmd_makenv() {
         "$img" /opt/multispack/bin/phase-makenv.sh
 }
 
+# viewgroups [opts] <input.spack.yaml> [more.yaml ...]
+# Derive an optimal grouped spack.yaml from declared views, in the builder.
+# The heavy lifting is bin/spack-view-groups.py (mounted at /opt/multispack/bin
+# via DEV_MOUNTS); this wrapper mounts the repo rw at /ms-repo so the tool can
+# read the input file(s) and write the generated grouped manifest, gives it the
+# /cvmfs Spack + a writable scratch area, and forwards the options.
+cmd_viewgroups() {
+    [ "$DEV_MOUNTS" = 1 ] || die "viewgroups: needs DEV_MOUNTS=1 (mounts bin/ into the builder)"
+    local image="${MAKENV_IMAGE}" out="" reuse="false" verify=0 report=0 keep=0 ptimeout="" probe="" stimeout="" order="" emit=""
+    local inputs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -i|--image)  image="${2:?--image needs a value}"; shift 2 ;;
+            -o|--output) out="${2:?--output needs a value}"; shift 2 ;;
+            --reuse)     reuse="${2:?--reuse needs true|false}"; shift 2 ;;
+            --probe)     probe="${2:?--probe needs staged|independent}"; shift 2 ;;
+            --order)     order="${2:?--order needs rich|cheap|declared}"; shift 2 ;;
+            --emit)      emit="${2:?--emit needs auto|chain|lattice}"; shift 2 ;;
+            --probe-timeout) ptimeout="${2:?--probe-timeout needs SECS}"; shift 2 ;;
+            --size-timeout)  stimeout="${2:?--size-timeout needs SECS}"; shift 2 ;;
+            --verify)    verify=1; shift ;;
+            --report)    report=1; shift ;;
+            --keep)      keep=1; shift ;;
+            -h|--help)
+                echo "usage: multispack.sh viewgroups [--image N] [--reuse true|false] [--probe staged|independent] [--order rich|cheap|declared] [--emit auto|chain|lattice] [--probe-timeout SECS] [--size-timeout SECS] [-o OUT] [--verify] [--report] <input.spack.yaml> [more.yaml...]"
+                return 0 ;;
+            -*) die "viewgroups: unknown option: $1" ;;
+            *)  inputs+=("$1"); shift ;;
+        esac
+    done
+    [ "${#inputs[@]}" -gt 0 ] || die "viewgroups: missing <input.spack.yaml>"
+
+    # Translate a host path under the repo to its /ms-repo mount location.
+    to_ctr() {
+        local p; p="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+        case "$p" in "$HERE"/*) printf '/ms-repo/%s\n' "${p#"$HERE"/}" ;;
+            *) die "viewgroups: path must live under the repo ($HERE): $1" ;; esac
+    }
+    local img="${IMG_PREFIX}/${image}:${IMG_TAG}"
+    "$ENGINE" image exists "$img" 2>/dev/null \
+        || die "viewgroups: image not built: ${img}  (build it: ./multispack.sh images ${image})"
+
+    local args=(python3 /opt/multispack/bin/spack-view-groups.py
+                --spack spack --workdir /multispack/work/viewgroups)
+    [ "$reuse" = "true" ] || [ "$reuse" = "false" ] || die "viewgroups: --reuse must be true|false"
+    args+=(--reuse "$reuse")
+    [ -n "$probe" ] && args+=(--probe "$probe")
+    [ -n "$order" ] && args+=(--order "$order")
+    [ -n "$emit" ] && args+=(--emit "$emit")
+    [ -n "$ptimeout" ] && args+=(--probe-timeout "$ptimeout")
+    [ -n "$stimeout" ] && args+=(--size-timeout "$stimeout")
+    [ "$verify" = 1 ] && args+=(--verify)
+    [ "$report" = 1 ] && args+=(--report)
+    [ "$keep" = 1 ] && args+=(--keep)
+    if [ -n "$out" ]; then args+=(-o "$(to_ctr "$out")"); fi
+    local f; for f in "${inputs[@]}"; do
+        [ -f "$f" ] || die "viewgroups: no such input: $f"; args+=("$(to_ctr "$f")")
+    done
+
+    msg "viewgroups: input=${inputs[*]}  reuse=${reuse}  image=${image}"
+    mapfile -t _v < <(vol_args rw)
+    mapfile -t _e < <(env_args)
+    # Quote the tool argv so `sh -lc` (after sourcing setup-env) runs it verbatim.
+    local q="" a; for a in "${args[@]}"; do q+=" $(printf '%q' "$a")"; done
+    "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" \
+        -v "${HERE}:/ms-repo${SEL}" \
+        "$img" /bin/sh -lc '. "$CVMFS_ROOT/spack/share/spack/setup-env.sh"; export SPACK_ROOT="$CVMFS_ROOT/spack"; exec'"$q"
+}
+
 # sbom [--format cyclonedx|spdx|text] <env>
 # Emit a Software Bill of Materials for an environment (managed name, env dir, or
 # a name under /cvmfs/.../env) and flag the CVE-prone leaves.  Read-only.
@@ -532,6 +601,20 @@ Custom environments:
                                       the form communities expect for releases
                        --no-check     skip the pre-install container capability gates
 
+  viewgroups [opts] <input.spack.yaml> [more.yaml...]
+                     derive an optimal grouped spack.yaml from the views declared
+                     in the input(s): concretize the views (staged in ONE needs-
+                     chained env so later views deterministically reuse earlier
+                     ones -- no reuse:true), then emit group:/needs: + one view each.
+                       --reuse true|false  concretizer:reuse for probes+output
+                       --probe staged|independent   (default staged)
+                       --order rich|cheap|declared  atomic-view stage order
+                       --emit  auto|chain|lattice   grouped-env structure
+                       --probe-timeout SECS  demote a view that exceeds it
+                       -o OUT              write grouped manifest here (repo path)
+                       --verify            re-concretize the emitted env and check
+                       --report            print the view-partition report
+
 Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine
 
@@ -585,6 +668,7 @@ main() {
                 done
             fi ;;
         makenv)     cmd_makenv "$@" ;;
+        viewgroups) cmd_viewgroups "$@" ;;
         sbom)       cmd_sbom "$@" ;;
         report)     cmd_report ;;
         status)     cmd_status ;;

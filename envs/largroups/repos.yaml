@@ -1,0 +1,25 @@
+# Package recipe repositories by upstream git URL + branch (Spack fetches them at
+# concretize time).  The DEFAULT include.  NOTE: upstream nusofthep-spack-recipes
+# currently mis-builds dk2nugenie (its genie CMakeLists find_library uses an unset
+# LIBXML2_FQ_DIR); to actually INSTALL, clone+patch it and use repos-dev.yaml.
+repos:
+  larsoft:
+    git: https://github.com/LArSoft/larsoft-spack-recipes.git
+    branch: main
+    paths: [spack_repo/larsoft]
+  nusofthep:
+    git: https://github.com/NuSoftHEP/nusofthep-spack-recipes.git
+    branch: spack-v1.0
+    paths: [spack_repo/nusofthep]
+  fnal_art:
+    git: https://github.com/FNALssi/fnal_art.git
+    branch: develop
+    paths: [spack_repo/fnal_art]
+  wirecell:
+    git: https://github.com/WireCell/wire-cell-spack.git
+    branch: master
+    paths: [spack_repo/wirecell]
+  builtin:
+    git: https://github.com/FNALssi/spack-packages.git
+    branch: fnal-develop
+    paths: [repos/spack_repo/builtin]

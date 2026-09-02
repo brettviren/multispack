@@ -1,0 +1,11 @@
+# Local-clone variant of repos.yaml: each repo is a filesystem path (string form of
+# the repos: schema) into a clone under ./recipes/.  Clone the repos you edit, e.g.:
+#   git clone -b spack-v1.0 https://github.com/NuSoftHEP/nusofthep-spack-recipes \
+#       recipes/nusofthep-spack-recipes   # then apply the LIBXML2_FQ_DIR fix
+# and swap the spack.yaml include from repos.yaml to repos-dev.yaml.
+repos:
+  larsoft: ./recipes/larsoft-spack-recipes/spack_repo/larsoft
+  nusofthep: ./recipes/nusofthep-spack-recipes/spack_repo/nusofthep
+  fnal_art: ./recipes/fnal_art/spack_repo/fnal_art
+  wirecell: ./recipes/wire-cell-spack/spack_repo/wirecell
+  builtin: ./recipes/spack-packages/repos/spack_repo/builtin

@@ -1,0 +1,16 @@
+# art: the art/gallery framework layer (was st_larsoft_0).
+definitions:
+- art:
+  - art %build_compiler
+  - art-root-io %build_compiler
+  - canvas %build_compiler
+  - canvas-root-io %build_compiler
+  - cetlib %build_compiler
+  - cetlib-except %build_compiler
+  - cetmodules %build_compiler
+  - critic %build_compiler
+  - fhicl-cpp %build_compiler
+  - gallery %build_compiler
+  - hep-concurrency %build_compiler
+  - ifdh-art %build_compiler
+  - messagefacility %build_compiler

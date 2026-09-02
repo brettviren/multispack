@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multispack — the concept</title>
+<style>
+  :root{
+    --bg:#f7f8fb; --panel:#ffffff; --ink:#161a22; --mut:#5c6472; --line:#e4e7ee;
+    --accent:#3b5bdb; --accent-soft:#e7ecfb; --good:#1a7f47; --good-soft:#e4f4ea;
+    --warn:#8a5a00; --warn-soft:#fbf0d9; --bad:#b3261e; --bad-soft:#fbe9e8;
+    --code:#f1f3f8; --shadow:0 1px 2px rgba(20,26,34,.06),0 8px 24px rgba(20,26,34,.05);
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0f1218; --panel:#161b23; --ink:#e7ebf2; --mut:#98a1b2; --line:#262d38;
+    --accent:#8aa4ff; --accent-soft:#1b2540; --good:#5fd48f; --good-soft:#123020;
+    --warn:#e6b467; --warn-soft:#33270f; --bad:#ff8b82; --bad-soft:#3a1a17;
+    --code:#1b212b; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }}
+  /* viewer's manual toggle must win over the OS media query, in both directions */
+  :root[data-theme="dark"]{color-scheme:dark;
+    --bg:#0f1218; --panel:#161b23; --ink:#e7ebf2; --mut:#98a1b2; --line:#262d38;
+    --accent:#8aa4ff; --accent-soft:#1b2540; --good:#5fd48f; --good-soft:#123020;
+    --warn:#e6b467; --warn-soft:#33270f; --bad:#ff8b82; --bad-soft:#3a1a17;
+    --code:#1b212b; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{color-scheme:light;
+    --bg:#f7f8fb; --panel:#ffffff; --ink:#161a22; --mut:#5c6472; --line:#e4e7ee;
+    --accent:#3b5bdb; --accent-soft:#e7ecfb; --good:#1a7f47; --good-soft:#e4f4ea;
+    --warn:#8a5a00; --warn-soft:#fbf0d9; --bad:#b3261e; --bad-soft:#fbe9e8;
+    --code:#f1f3f8; --shadow:0 1px 2px rgba(20,26,34,.06),0 8px 24px rgba(20,26,34,.05);
+  }
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin-inline:auto;padding:0 1.25rem}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
+  code{background:var(--code);padding:.12em .4em;border-radius:5px}
+  h1,h2,h3{line-height:1.25;letter-spacing:-.01em}
+  h2{font-size:1.5rem;margin:0 0 .3rem}
+  h3{font-size:1.05rem;margin:1.6rem 0 .4rem}
+  p{margin:.6rem 0}
+  section{padding:2.6rem 0;border-top:1px solid var(--line)}
+  .eyebrow{font-size:.78rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+  .lead{color:var(--mut);font-size:1.05rem;max-width:66ch}
+
+  /* hero */
+  header.hero{padding:4rem 0 3rem;background:
+    radial-gradient(1200px 400px at 15% -10%,var(--accent-soft),transparent 60%);
+    border-bottom:1px solid var(--line)}
+  header.hero h1{font-size:2.7rem;margin:.4rem 0 .5rem}
+  header.hero h1 .dot{color:var(--accent)}
+  .tagline{font-size:1.2rem;color:var(--mut);max-width:60ch}
+  .pill{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.75rem;
+    font-weight:600;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .pills{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.2rem}
+
+  /* generic panel + grid */
+  .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:1.1rem 1.15rem;box-shadow:var(--shadow)}
+  .card h3{margin-top:0}
+  .card .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+
+  table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.92rem;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:.6rem .75rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:700}
+  tr:last-child td{border-bottom:none}
+  .tag{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.74rem;font-weight:700}
+  .tag.host{background:var(--warn-soft);color:var(--warn)}
+  .tag.spack{background:var(--accent-soft);color:var(--accent)}
+  .tag.pass{background:var(--good-soft);color:var(--good)}
+  .tag.xfail{background:var(--warn-soft);color:var(--warn)}
+
+  /* pipeline flow */
+  .flow{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:1.1rem 0}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    padding:.35rem .6rem;font-size:.82rem;font-family:ui-monospace,monospace;white-space:nowrap}
+  .step.gate{border-color:var(--accent);color:var(--accent);font-weight:700}
+  .arrow{color:var(--mut);font-size:.9rem}
+
+  ul.clean{list-style:none;padding:0;margin:.4rem 0}
+  ul.clean li{padding:.28rem 0 .28rem 1.5rem;position:relative}
+  ul.clean li::before{content:"";position:absolute;left:.1rem;top:.85rem;width:.5rem;height:.5rem;
+    border-radius:50%;background:var(--accent)}
+  ul.solve li::before{background:var(--good)}
+  ul.add li::before{background:var(--warn)}
+
+  .note{background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;
+    padding:.7rem .9rem;margin:1rem 0;font-size:.95rem}
+
+  /* timeline */
+  .timeline{position:relative;margin:1.4rem 0 0;padding-left:1.4rem}
+  .timeline::before{content:"";position:absolute;left:.32rem;top:.4rem;bottom:.4rem;width:2px;background:var(--line)}
+  .tl{position:relative;padding:.2rem 0 1.1rem 0}
+  .tl::before{content:"";position:absolute;left:-1.22rem;top:.5rem;width:.7rem;height:.7rem;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 0 4px var(--bg)}
+  .tl .when{font-weight:700}
+  footer{color:var(--mut);font-size:.85rem;padding:2.5rem 0;border-top:1px solid var(--line)}
+  .mono{font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Distribution-independent scientific software</div>
+    <h1>multispack<span class="dot">.</span></h1>
+    <p class="tagline">Build a Spack software stack <strong>once</strong>, in a captured container, so its binaries
+      run <strong>unmodified</strong> across a decade of Linux distributions — and prove it.</p>
+    <div class="pills">
+      <span class="pill">glibc&nbsp;2.28 floor · manylinux_2_28</span>
+      <span class="pill">AlmaLinux 8/9/10 · Debian 12/13 · SLES 15</span>
+      <span class="pill">containers + podman</span>
+      <span class="pill">$ORIGIN-relocatable</span>
+      <span class="pill">SBOM + audited</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section>
+  <div class="eyebrow">The problem</div>
+  <h2>One distribution, one uncaptured build</h2>
+  <p class="lead">The current DUNE paradigm builds Spack packages for <strong>AlmaLinux&nbsp;9 only</strong>, using the
+    native host environment. That couples the software to two things it shouldn't depend on.</p>
+  <div class="grid" style="margin-top:1.2rem">
+    <div class="card">
+      <div class="k">Problem 1</div>
+      <h3>The build environment is not captured</h3>
+      <p>A native, un-containerized build is hard to reproduce and drifts with the host. There is no pinned,
+        digest-recorded record of exactly what produced the binaries.</p>
+    </div>
+    <div class="card">
+      <div class="k">Problem 2</div>
+      <h3>The binaries are tied to one distribution</h3>
+      <p>Built on AlmaLinux&nbsp;9 (glibc&nbsp;2.34), the binaries acquire <code>GLIBC_2.34</code> symbols and
+        <em>will not run</em> on anything older — AlmaLinux&nbsp;8, EL7, older SLES on DOE HPC nodes. They also link
+        the OS's own libraries, so a distribution's next major rebase can break them.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">The concept</div>
+  <h2>Build low, ship high, target the oldest glibc</h2>
+  <p class="lead">multispack implements <strong>“Strategy&nbsp;B”</strong>: build inside a pinned container whose glibc is
+    the <em>oldest</em> you must support, build everything above libc with Spack, and let glibc's forward
+    symbol-versioning guarantee carry the binaries to every newer system.</p>
+
+  <table>
+    <tr><th>Layer</th><th>Provided by</th><th>Why</th></tr>
+    <tr><td>Linux kernel</td><td><span class="tag host">host</span></td><td>syscall ABI is stable forward</td></tr>
+    <tr><td><code>glibc</code> / <code>ld.so</code></td><td><span class="tag host">host</span></td>
+        <td>floor set by the base image (AlmaLinux&nbsp;8 = glibc&nbsp;2.28)</td></tr>
+    <tr><td>kernel/driver-bound libs<br><span class="mono" style="color:var(--mut)">libcuda, libGL, verbs, PMI</span></td>
+        <td><span class="tag host">host</span></td><td>can never be shipped; injected at runtime</td></tr>
+    <tr><td>compiler, libstdc++, python, ROOT, <em>everything else</em></td>
+        <td><span class="tag spack">Spack</span></td><td>captured, pinned, relocatable, audited</td></tr>
+  </table>
+
+  <div class="note"><strong>The one-sentence pitch:</strong> glibc&nbsp;2.28 is the <code>manylinux_2_28</code> baseline —
+    “these binaries have the same portability guarantee as a pip wheel,” backed by the entire Python packaging
+    ecosystem. It is also <em>newer</em> than the glibc&nbsp;2.17 that Fermilab shipped on SL7 until recently.</p></div>
+
+  <h3>Why the direction matters</h3>
+  <p>glibc never removes a symbol version, so a binary built against an <em>older</em> glibc runs on every
+    <em>newer</em> one — but not the reverse. Building on AlmaLinux&nbsp;9 bakes in <code>GLIBC_2.34</code> and
+    <em>excludes</em> AlmaLinux&nbsp;8. Building on AlmaLinux&nbsp;8 runs on 8, 9 <em>and</em> 10. This is measured,
+    not asserted — see <a href="../test/pthread/">the pthread symbol-version demonstration</a>.</p>
+</section>
+
+<section>
+  <div class="eyebrow">How it works</div>
+  <h2>The <code>multispack.sh</code> pipeline</h2>
+  <p class="lead">One orchestrator drives every phase inside podman containers on three volumes
+    (the <code>/cvmfs</code> install tree, a source+binary cache, and scratch). Each phase records JSON to
+    <code>meta/</code> for a self-contained HTML report.</p>
+
+  <div class="flow">
+    <span class="step">volumes</span><span class="arrow">→</span>
+    <span class="step">images</span><span class="arrow">→</span>
+    <span class="step">bootstrap</span><span class="arrow">→</span>
+    <span class="step">compiler</span><span class="arrow">→</span>
+    <span class="step gate">compiler-validate</span><span class="arrow">→</span>
+    <span class="step gate">concretize</span><span class="arrow">→</span>
+    <span class="step">stack</span><span class="arrow">→</span>
+    <span class="step">originize</span><span class="arrow">→</span>
+    <span class="step">audit</span><span class="arrow">→</span>
+    <span class="step">buildcache</span><span class="arrow">→</span>
+    <span class="step">deploy</span><span class="arrow">→</span>
+    <span class="step">validate</span><span class="arrow">→</span>
+    <span class="step">report</span>
+  </div>
+  <p style="font-size:.85rem;color:var(--mut)">Blue steps are fast gates — run them before committing to a
+    multi-hour build. <code>./multispack.sh all</code> runs the lot.</p>
+
+  <div class="grid" style="margin-top:1.3rem">
+    <div class="card"><div class="k">Set up</div><h3>volumes · images</h3>
+      <p>Create the podman volumes; build the pinned builder image (glibc-floor base) and the bare +
+        <code>-devel</code> validator images for every target distro.</p></div>
+    <div class="card"><div class="k">Toolchain</div><h3>bootstrap · compiler · compiler-validate</h3>
+      <p>Clone Spack; build the GCC ladder (base gcc&nbsp;8.5 → gcc@14 → <strong>gcc@15</strong>) with its own
+        binutils; then prove that gcc@15 <em>runs and compiles</em> in every bare validator.</p></div>
+    <div class="card"><div class="k">Build</div><h3>concretize · stack</h3>
+      <p>Solve the environment (the fast gate where mistakes surface), then install the payload against the
+        portable compiler on a generic <code>x86_64_v3</code> microarchitecture.</p></div>
+    <div class="card"><div class="k">Relocate &amp; verify</div><h3>originize · audit</h3>
+      <p>Rewrite absolute RPATHs to store-relative <code>$ORIGIN</code> so the whole tree relocates as a unit;
+        then ELF-audit the glibc symbol floor and confirm the only external library tier is <code>libc</code>.</p></div>
+    <div class="card"><div class="k">Distribute</div><h3>buildcache · deploy</h3>
+      <p>Push the tree to a binary cache (so rebuilds and patches are cheap), and write per-flavour
+        <code>env.sh</code> plus a deployment manifest.</p></div>
+    <div class="card"><div class="k">Validate</div><h3>validate</h3>
+      <p>Run the payload in <em>bare</em> containers for every distribution, <code>/cvmfs</code> mounted read-only,
+        nothing installed — if it runs, the <code>$ORIGIN</code> rpaths are carrying the load.</p></div>
+    <div class="card"><div class="k">Custom stacks</div><h3>makenv</h3>
+      <p>Concretize + install <em>any</em> user <code>spack.yaml</code> into the shared tree — as a directory
+        environment or a named <em>managed</em> environment — with pre-flight gates that fail fast when the
+        container lacks a required OS-level dependency.</p></div>
+    <div class="card"><div class="k">Security</div><h3>sbom</h3>
+      <p>Emit a CycloneDX/SPDX bill of materials from the lockfile and flag the CVE-prone leaves
+        (<code>openssl</code>, <code>curl</code>, <code>libxml2</code>…) — ready for grype/trivy.</p></div>
+    <div class="card"><div class="k">Utility</div><h3>report · status · shell</h3>
+      <p>Merge the phase JSON into <code>report.html</code>, summarize progress, or drop into a builder shell
+        with the volumes mounted — where debugging happens.</p></div>
+  </div>
+
+  <h3>The techniques that make it work</h3>
+  <ul class="clean">
+    <li><strong>Flat install projection</strong> (<code>{name}-{version}-{hash}</code>): every prefix is a sibling, so
+      store-relative rpaths are uniform and the distro/compiler never appear in a path.</li>
+    <li><strong>In-place <code>$ORIGIN</code> rewriting</strong> that preserves hardlinks and shrinks-only, with padded
+      install prefixes so a tree can later be relocated to a shorter path.</li>
+    <li><strong>ELF audit</strong> that reports the glibc floor, unresolved <code>DT_NEEDED</code>, and every library the
+      host must provide — turning “is this portable?” into a checkable property.</li>
+    <li><strong>Cross-distribution validation matrix</strong> as a first-class artifact, including a deliberate
+      musl <span class="tag xfail">xfail</span> that marks the exact boundary of the approach.</li>
+  </ul>
+</section>
+
+<section>
+  <div class="eyebrow">Compared to the AL9-native paradigm</div>
+  <h2>What it solves, what it adds, what it unlocks</h2>
+  <div class="grid">
+    <div class="card">
+      <h3 style="color:var(--good)">Problems solved</h3>
+      <ul class="clean solve">
+        <li>One build runs on AlmaLinux&nbsp;8/9/10, Debian&nbsp;12/13, SLES&nbsp;15 — including older DOE HPC nodes.</li>
+        <li>The build environment is captured: a digest-pinned image and a recorded lockfile / manifest.</li>
+        <li>Dodges the glibc&nbsp;2.34 pthread cliff by building on the oldest glibc.</li>
+        <li>Immune to a distribution's library rebase — it ships its own libstdc++, boost, python, openssl…</li>
+        <li>Relocatable beyond <code>/cvmfs</code>: the tree moves as a unit via <code>$ORIGIN</code>.</li>
+        <li>Portability is <em>audited and validated</em>, not hoped for.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--warn)">Problems it adds</h3>
+      <ul class="clean add">
+        <li>Security patching of shipped libraries moves out of OS procedures — mitigated by <code>sbom</code> + a
+          rebuild-and-redeploy process (bump the leaf, buildcache reuses the rest).</li>
+        <li>More moving parts: containers, podman, relocation, an ISA floor.</li>
+        <li>Larger footprint: shipping everything above libc costs disk (cheap on cached <code>/cvmfs</code>).</li>
+        <li>Runtime pitfalls it does <em>not</em> auto-solve — e.g. the static-TLS-surplus limit for
+          <code>dlopen</code>-heavy plugin hosts (<a href="../test/tls-surplus/">demonstrated here</a>).</li>
+        <li><code>x86_64_v3</code> excludes pre-Haswell / pre-Zen CPUs; musl is out of scope by design.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--accent)">Benefits unlocked</h3>
+      <ul class="clean">
+        <li>Multi-distribution CI: a green validation matrix is a stronger argument than any design document.</li>
+        <li>A precise per-artifact SBOM makes CVE <em>detection</em> continuous and exact.</li>
+        <li>DOE HPC facility access (the SLES&nbsp;15 row) without a distro-specific rebuild.</li>
+        <li>A binary buildcache → fast patches and reproducible re-deploys.</li>
+        <li>An evidence-based <a href="../test/">criticism-response test suite</a> that answers objections with runnable proof.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>The validation matrix — the artifact to lead with</h3>
+  <table>
+    <tr><th>Distribution</th><th>glibc</th><th>Result</th><th>Meaning</th></tr>
+    <tr><td>AlmaLinux 8</td><td>2.28</td><td><span class="tag pass">pass</span></td><td>the build floor itself</td></tr>
+    <tr><td>AlmaLinux 9</td><td>2.34</td><td><span class="tag pass">pass</span></td><td>the current DUNE target — green alongside the rest</td></tr>
+    <tr><td>Debian 12 / 13</td><td>2.36 / 2.41</td><td><span class="tag pass">pass</span></td><td>a different distro family</td></tr>
+    <tr><td>SLES 15 SP6</td><td>2.31</td><td><span class="tag pass">pass</span></td><td>proxy for DOE HPC facility nodes</td></tr>
+    <tr><td>Alpine (musl)</td><td>—</td><td><span class="tag xfail">xfail</span></td><td>the deliberate boundary; Strategy&nbsp;A would turn it green</td></tr>
+  </table>
+</section>
+
+<section>
+  <div class="eyebrow">The next decade</div>
+  <h2>When AlmaLinux 8 is the new Scientific Linux 7</h2>
+  <p class="lead">The glibc floor is a <strong>knob, not a fixed choice</strong>. Everything in multispack is
+    parameterized by <code>BUILDER_BASE</code>; the framework does not care <em>which</em> glibc is the oldest, only
+    that it builds against it and proves the result. That is what lets the concept age gracefully.</p>
+
+  <div class="timeline">
+    <div class="tl"><div class="when">Now — glibc 2.28 floor</div>
+      <p>AlmaLinux&nbsp;8 / <code>manylinux_2_28</code>. Single ISA stream (<code>x86_64_v3</code>). Directory and managed
+        environments, SBOMs, a cross-distro validation matrix, an evidence test suite.</p></div>
+    <div class="tl"><div class="when">Advance the floor as the community does</div>
+      <p>When AlmaLinux&nbsp;8 is retired, re-point <code>BUILDER_BASE</code> to the new oldest supported base
+        (<code>manylinux_2_34</code>, then <code>_2_39</code>, …) and rebuild. The validation matrix <em>proves</em> the
+        new floor before anyone depends on it — floor migration becomes a routine, evidenced operation rather than a
+        leap of faith.</p></div>
+    <div class="tl"><div class="when">Concurrent floors &amp; ISA streams</div>
+      <p>Maintain two or three glibc-floor streams at once (exactly as <code>manylinux</code> ships multiple baselines),
+        plus <code>x86_64_v2/v3/v4</code> and aarch64 trees selected at runtime by <code>archspec</code>. One payload,
+        several portability envelopes, chosen per node.</p></div>
+    <div class="tl"><div class="when">Strategy A escape hatch</div>
+      <p>When even the oldest reasonable glibc is too new for a target, ship <em>our own</em> glibc and dynamic loader
+        (the EESSI compatibility-layer idea). The relocation machinery here — flat store, <code>$ORIGIN</code>,
+        padded prefixes — is already a step toward that, needing only a fixed prefix and an own-loader
+        <code>PT_INTERP</code>.</p></div>
+    <div class="tl"><div class="when">Security &amp; provenance as automation</div>
+      <p><code>sbom</code> → continuous <code>grype</code>/<code>trivy</code> scanning in CI; a rebuild-on-CVE path with a
+        stated SLA for network-facing leaves; signed buildcaches and SLSA-style provenance so a deployed tree can be
+        verified, not just trusted.</p></div>
+    <div class="tl"><div class="when">Distribution at scale</div>
+      <p>OCI-registry buildcaches, CVMFS publishing, and cross-facility binary sharing — so a stack built once is
+        pulled everywhere as signed binaries, and a security patch propagates as fast as a registry sync.</p></div>
+  </div>
+
+  <div class="note"><strong>The throughline:</strong> a scientific software release should be defined by
+    <em>what it is</em> — a captured, audited, relocatable set of binaries with a bill of materials — not by
+    <em>which host happened to build it</em>. multispack makes that definition executable, and keeps it true as the
+    ground shifts underneath.</p></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    multispack — distribution-independent Spack install areas · Strategy B (host glibc, everything above it built by
+    Spack). See <code>PLAN.md</code> for the design and <code>test/</code> for the evidence.
+  </div>
+</footer>
+
+</body>
+</html>

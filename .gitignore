@@ -1,3 +1,7 @@
 .claude
 PLAN.md
 meta
+# Spack env build artifacts and local recipe clones
+envs/*/spack.lock
+envs/*/.spack-env
+envs/*/recipes
