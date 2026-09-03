@@ -764,37 +764,51 @@ EOF
 # with the uv cache mounted (offline if deps are cached).  SPECs default to the
 # roots of --env; otherwise pass explicit specs (qualify with /hash if ambiguous).
 cmd_conda_export() {
-    local dir="$DEPLOY_DIR/channel" image="${MAKENV_IMAGE}" env="" ; local specs=()
+    local dest="" env="" image="${MAKENV_IMAGE}" jobs="0"; local seeds=()
     while [ $# -gt 0 ]; do
         case "$1" in
-            --channel) dir="${2:?--channel needs DIR}"; shift 2 ;;
+            --channel) dest="${2:?--channel needs DIR or host:path}"; shift 2 ;;
             -i|--image) image="${2:?--image needs a value}"; shift 2 ;;
             --env)     env="${2:?--env needs a name}"; shift 2 ;;
-            -h|--help) echo "usage: multispack.sh conda-export [--channel DIR] [--image N] [--env NAME] [SPEC...]"; return 0 ;;
-            --) shift; while [ $# -gt 0 ]; do specs+=("$1"); shift; done ;;
+            --spec)    seeds+=("${2:?--spec needs a spec}"); shift 2 ;;
+            -j|--jobs) jobs="${2:?--jobs needs N}"; shift 2 ;;
+            -h|--help) echo "usage: multispack.sh conda-export [--env NAME] [--spec SPEC]... [--jobs N] [DIR-or-host:path]"; return 0 ;;
             -*) die "conda-export: unknown option: $1" ;;
-            *)  specs+=("$1"); shift ;;
+            *)  dest="$1"; shift ;;
         esac
     done
-    [ -n "$env" ] || [ "${#specs[@]}" -gt 0 ] || die "conda-export: give --env NAME or explicit SPEC(s)"
     [ -x "$UV_BIN" ] || die "conda-export: uv not found at '$UV_BIN' (set UV_BIN)"
     [ -f "$SPAXI_SRC/pyproject.toml" ] || die "conda-export: no spaxi source at '$SPAXI_SRC' (set SPAXI_SRC)"
     local img="${IMG_PREFIX}/${image}:${IMG_TAG}"
     "$ENGINE" image exists "$img" 2>/dev/null || die "conda-export: image not built: ${img}"
-    mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
-    local uvcache; uvcache="$("$UV_BIN" cache dir 2>/dev/null || echo "$HOME/.cache/uv")"
-    mkdir -p "$uvcache"
+    local uvcache; uvcache="$("$UV_BIN" cache dir 2>/dev/null || echo "$HOME/.cache/uv")"; mkdir -p "$uvcache"
 
-    msg "conda-export: spaxi conda -> $dir  (env='${env}' specs='${specs[*]}')"
+    # DEST is a local channel dir (default deploy/channel) or an scp host:path.  spaxi
+    # writes files, so an scp target is staged locally (kept for incremental re-runs)
+    # then tar-streamed to the remote.
+    local scp=0 rhost="" rpath="" outdir
+    if _is_scp "${dest:-}"; then
+        scp=1; rhost="${dest%%:*}"; rpath="${dest#*:}"
+        [ -n "$rpath" ] || die "conda-export: scp target must be host:path"
+        command -v ssh >/dev/null || die "conda-export: ssh not found on this host"
+        outdir="$DEPLOY_DIR/channel"
+    else
+        outdir="${dest:-$DEPLOY_DIR/channel}"
+    fi
+    mkdir -p "$outdir"; outdir="$(cd "$outdir" && pwd)"
+
+    local what="EVERYTHING installed"
+    [ -n "$env" ] && what="env '$env'"
+    [ "${#seeds[@]}" -gt 0 ] && what="specs '${seeds[*]}'"
+    msg "conda-export: $what -> $outdir  (jobs=$jobs)"
+    [ -n "$env" ] || [ "${#seeds[@]}" -gt 0 ] || \
+        warn "conda-export: converting the WHOLE store (1000+ specs) -- this is slow"
+
     mapfile -t _v < <(vol_args rw)
     mapfile -t _e < <(env_args)
-    # Build the in-container spaxi invocation.  If --env, derive its installed root
-    # specs as /hash; else use the given specs.
-    local q="" a; for a in "${specs[@]}"; do q+=" $(printf '%q' "$a")"; done
     "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" \
-        -v "$dir:/out" -v "${SPAXI_SRC}:/spaxi:ro" -v "${UV_BIN}:/usr/local/bin/uv:ro" \
-        -v "${uvcache}:/root/.cache/uv" \
-        -e "CONDA_ENV=${env}" \
+        -v "$outdir:/out" -v "${SPAXI_SRC}:/spaxi:ro" -v "${UV_BIN}:/usr/local/bin/uv:ro" \
+        -v "${uvcache}:/root/.cache/uv" -e "CONDA_ENV=${env}" -e "CE_JOBS=${jobs}" \
         "$img" /bin/bash -lc '
             . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
             export SPACK_ROOT="$CVMFS_ROOT/spack" SPACK_DISABLE_LOCAL_CONFIG=1 \
@@ -802,29 +816,36 @@ cmd_conda_export() {
                    TMPDIR=/multispack/work/tmp UV_CACHE_DIR=/root/.cache/uv HOME=/root \
                    UV_PROJECT_ENVIRONMENT=/multispack/work/spaxi-venv UV_LINK_MODE=copy
             mkdir -p "$TMPDIR"
-            set --'"$q"'
+            # Pick the spec set: env roots, the given seeds ($@), or -- with neither --
+            # EVERYTHING installed (the full store, as name/hash; --no-deps: already complete).
+            DEPS=--deps
             if [ -n "$CONDA_ENV" ]; then
-                leaf="${CONDA_ENV##*/}"; ER="$CONDA_ENV"
-                [ -d "$CVMFS_ROOT/env/$leaf" ] && ER="$CVMFS_ROOT/env/$leaf"
-                # roots of the env, as name/hash (unambiguous for spaxi)
-                for h in $(spack -e "$ER" find --no-groups --format "{name}/{hash}" 2>/dev/null); do
-                    set -- "$@" "$h"
-                done
+                leaf="${CONDA_ENV##*/}"; ER="$CONDA_ENV"; [ -d "$CVMFS_ROOT/env/$leaf" ] && ER="$CVMFS_ROOT/env/$leaf"
+                set -- $(spack -e "$ER" find --format "{name}/{hash}" 2>/dev/null)
+            elif [ "$#" -eq 0 ]; then
+                DEPS=--no-deps
+                set -- $(spack find --format "{name}/{hash}" 2>/dev/null)
             fi
             [ "$#" -gt 0 ] || { echo "conda-export: no specs to convert" >&2; exit 2; }
-            echo "conda-export: converting: $*" >&2
-            # spaxi is a setuptools project that writes egg-info at build time, but its
-            # source is mounted read-only -- copy the build essentials (static version,
-            # no .git needed) to a writable dir and build from there.
+            echo "conda-export: converting $# spec(s)" >&2
+            # spaxi (setuptools) writes egg-info at build; its source is mounted read-only,
+            # so copy the build essentials (static version, no .git) to a writable dir.
             SPX=/multispack/work/spaxi-src; rm -rf "$SPX"; mkdir -p "$SPX"
             ( cd /spaxi && cp -a pyproject.toml uv.lock src "$SPX"/ 2>/dev/null
               cp -a README* LICENSE* NOTICE* "$SPX"/ 2>/dev/null || true )
-            # --frozen: use spaxi`s committed uv.lock without rewriting it; the venv
-            # lives under the writable work volume (UV_PROJECT_ENVIRONMENT).
             exec uv run --frozen --project "$SPX" spaxi \
-                --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda --deps "$@"
-        '
-    msg "conda-export: channel at $dir.  Serve it and 'pixi' against it (see spaxi docs)."
+                --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda "$DEPS" -j "$CE_JOBS" "$@"
+        ' sh "${seeds[@]}" || die "conda-export: spaxi conda failed"
+
+    if [ "$scp" = 1 ]; then
+        msg "conda-export: streaming channel -> ${rhost}:${rpath}"
+        tar -C "$outdir" -cf - . \
+            | ssh "$rhost" "mkdir -p $(printf '%q' "$rpath") && tar -C $(printf '%q' "$rpath") -xf -" \
+            || die "conda-export: channel stream failed"
+        msg "conda-export: channel on ${rhost}:${rpath}  (local staging kept at $outdir)"
+    else
+        msg "conda-export: channel at $outdir.  Serve it and point pixi at it (see docs/deploy.md)."
+    fi
 }
 
 usage() {
@@ -888,9 +909,11 @@ Deployment (get binaries to end users without Fermilab CVMFS):
   cache-client URL [DIR] write a self-contained Spack client bundle (mirror +
                          site config + setup.sh) that pulls from the HTTP cache
                          and never writes to ~/.spack
-  conda-export [--channel DIR] [--env NAME] [SPEC...]
+  conda-export [--env NAME] [--spec SPEC]... [--jobs N] [DEST]
                          run `spaxi conda` to convert installed specs into a conda
-                         channel (default deploy/channel) for end users of pixi
+                         channel for end users of pixi.  DEST is a local dir (default
+                         deploy/channel) or an scp host:path.  With neither --env nor
+                         --spec, converts EVERYTHING installed (the whole store)
 
 Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine

@@ -82,13 +82,22 @@ run via `uv` inside the builder).
 ### Provider
 
 ```sh
-# a whole environment's roots -> a conda channel, then serve it
-./multispack.sh conda-export --env largroups deploy/channel   # or: --channel deploy/channel
+# a whole environment's packages -> a conda channel, then serve it
+./multispack.sh conda-export --env largroups deploy/channel
 (cd deploy/channel && python3 -m http.server 8080)
 
-# or explicit specs (qualify with /hash if ambiguous)
-./multispack.sh conda-export wire-cell-toolkit larwirecell
+# explicit specs (qualify with /hash if ambiguous)
+./multispack.sh conda-export --spec wire-cell-toolkit --spec larwirecell deploy/channel
+
+# EVERYTHING installed (the whole store) -- slow; -j0 uses one worker per CPU
+./multispack.sh conda-export --jobs 0 deploy/channel
+
+# straight to another host (staged locally, then tar-streamed over ssh)
+./multispack.sh conda-export --env largroups bviren@web:/srv/www/spaxi
 ```
+
+`DEST` is a local dir (default `deploy/channel`) or an `scp` `host:path`.  With
+neither `--env` nor `--spec`, `conda-export` converts **everything installed**.
 
 `spaxi conda --deps --origin-rpaths` writes `<arch>/<pkg>-<ver>-<hash>.conda` files and
 `repodata.json` into the channel, self-contained (no Spack store needed to link).  The
