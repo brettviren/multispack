@@ -75,13 +75,6 @@ CONF="${MULTISPACK_CONF:-$HERE/multispack.conf}"
 # layer on top of these.  No alpine: Strategy B does not support musl.
 : "${DEVEL_VALIDATORS:=alma8-devel alma9-devel debian12-devel debian13-devel sles15-devel}"
 
-# Runtime images: a bare distro plus the MINIMAL packages to run Spack TOOLING
-# against the /cvmfs store (`multispack.sh runenv`): python3 (Spack is Python) and
-# git.  Kept SEPARATE from the bare validators so those stay empty (they prove the
-# shipped software runs on the glibc floor alone).  Build one on demand, e.g.
-# `multispack.sh images debian13-run`, then `multispack.sh runenv --image debian13-run`.
-: "${RUN_VALIDATORS:=alma8-run alma9-run debian12-run debian13-run sles15-run}"
-
 # Default image for `makenv`.  It must be able to run Spack (python3, git, ...)
 # AND supply the OS-level build dependencies packages need.  The builder is
 # exactly that: the manylinux base image + Spack's prerequisites + glibc-dev
@@ -538,7 +531,13 @@ cmd_runenv() {
             export SPACK_DISABLE_LOCAL_CONFIG=1
             export SPACK_USER_CACHE_PATH=/multispack/work/spack-user-cache
             export TMPDIR=/multispack/work/tmp; mkdir -p "$TMPDIR"
-            . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
+            # Fatten a minimal distro with the store`s own python+git so Spack runs;
+            # falls back to plain setup-env if the helper is not mounted (DEV_MOUNTS=0).
+            if [ -f /opt/multispack/bin/multispack-fatten.sh ]; then
+                . /opt/multispack/bin/multispack-fatten.sh
+            else
+                . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
+            fi
             E="$RUNENV_TARGET"; leaf="${E##*/}"; D=""
             case "$E" in
                 /*) [ -d "$CVMFS_ROOT/env/$leaf" ] && D="$CVMFS_ROOT/env/$leaf" ;;
@@ -580,7 +579,7 @@ cmd_nuke() {
     read -r -p "type 'yes' to continue: " a
     [ "$a" = yes ] || die "aborted"
     for v in "$VOL_CVMFS" "$VOL_CACHE" "$VOL_WORK"; do "$ENGINE" volume rm -f "$v" || true; done
-    for n in builder $VALIDATORS $DEVEL_VALIDATORS $RUN_VALIDATORS; do "$ENGINE" rmi -f "${IMG_PREFIX}/${n}:${IMG_TAG}" || true; done
+    for n in builder $VALIDATORS $DEVEL_VALIDATORS; do "$ENGINE" rmi -f "${IMG_PREFIX}/${n}:${IMG_TAG}" || true; done
 }
 
 cmd_all() {
@@ -673,9 +672,9 @@ Reporting and utility:
   runenv [--image NAME] <env>
                      like shell, but activate a Spack environment first.  <env> is
                      a leaf dir under /cvmfs/.../env (directory env) or a managed
-                     env name.  --image defaults to builder; to run on a minimal
-                     distro use a *-run image (python3 + git), e.g.
-                     `images debian13-run` then `runenv --image debian13-run <env>`
+                     env name; --image defaults to builder.  Works on a BARE distro
+                     image too: bin/multispack-fatten.sh puts the store's own
+                     python+git on PATH so Spack runs (no per-distro packages)
   clean              empty the work volume (stage/tmp/test)
   nuke               remove all multispack volumes and images
   all                run the whole pipeline end to end

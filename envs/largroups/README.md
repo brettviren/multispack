@@ -69,9 +69,9 @@ concrete nodes. `concretize` returns 0.
 ```
 
 `runenv` only *activates* the env; since it is `view: false`, run
-`spack load larwirecell` (etc.) to put `lar`/`wire-cell` on `PATH`. On a minimal
-distro, build a `-run` image first (bare distro + python3 + git):
-`./multispack.sh images debian13-run && ./multispack.sh runenv --image debian13-run largroups`.
+`spack load larwirecell` (etc.) to put `lar`/`wire-cell` on `PATH`. It works on a
+bare distro image too (`--image debian13`, …): `bin/multispack-fatten.sh` puts the
+store's own portable python+git on `PATH` so Spack runs — no per-distro packages.
 
 Built successfully (362 specs) with these recipe/config resolutions baked in:
 
