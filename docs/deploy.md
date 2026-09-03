@@ -93,12 +93,33 @@ tooling (`pixi`) and never sees Spack.  Uses your `spaxi` (`$SPAXI_SRC`, default
 # process (via --specs-from -); per-spec failures are reported, not fatal.
 ./multispack.sh conda-export --jobs 0 deploy/channel
 
-# straight to another host (staged locally, then tar-streamed over ssh)
+# straight to another host -- packages are drained to the remote *during*
+# conversion (rsync), so no full local copy is kept
 ./multispack.sh conda-export --env largroups bviren@web:/srv/www/spaxi
+
+# turn up parallelism and spaxi's logging (a file sink is a container path;
+# /out is the channel dir, so this log lands beside it on the host)
+./multispack.sh conda-export --jobs 0 -L debug -l /out/convert.log deploy/channel
 ```
+
+`--jobs`/`-j` is spaxi's parallelism budget: the whole batch of specs (deduped by
+hash across all their closures) converts through **one** pool of that many workers,
+so a single `conda-export` saturates the machine rather than converting spec by
+spec.  A package that fails to convert is reported and the batch continues.  `-l`/`-L`
+forward spaxi's `--log-sink`/`--log-level`.
 
 `DEST` is a local dir (default `deploy/channel`) or an `scp` `host:path`.  With
 neither `--env` nor `--spec`, `conda-export` converts **everything installed**.
+
+**scp target — no full local copy.**  When `DEST` is `host:path`, a background
+**drain** `rsync`s each *settled* `.conda` (built more than a minute ago, so
+spaxi's post-build digest read is long finished) to the remote and deletes it
+locally *while conversion continues*, so local disk only ever holds the last
+interval's packages plus the growing `repodata.json`.  The channel index stays
+local (authoritative) until a **final sync** ships `repodata.json` and any
+stragglers; the local staging dir is then removed entirely.  This needs `rsync`
+on both ends — without it, `conda-export` falls back to staging the whole channel
+locally and `tar`-streaming it at the end (local staging is kept in that case).
 
 `spaxi conda --deps --origin-rpaths` writes `<arch>/<pkg>-<ver>-<hash>.conda` files and
 `repodata.json` into the channel, self-contained (no Spack store needed to link).  The

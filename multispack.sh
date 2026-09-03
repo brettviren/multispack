@@ -757,14 +757,40 @@ EOF
     msg "cache-client: wrote self-contained client bundle to $dir  (see $dir/README.md)"
 }
 
+# One pass of the async drain: move every *settled* .conda (modified more than a
+# minute ago, so spaxi's post-rename digest read is long done) to the remote and
+# delete it locally.  repodata.json is never matched -- it stays local until the
+# final sync.  Transient rsync errors are ignored; the next pass retries (files
+# survive because --remove-source-files only deletes what actually transferred).
+# -mmin is used (not -newermt) for portability across GNU/BSD find.
+_conda_drain_once() {
+    local dir="$1" host="$2" path="$3"
+    find "$dir" -name '*.conda' -type f -mmin +1 -printf '%P\0' 2>/dev/null \
+        | rsync -a --from0 --files-from=- --remove-source-files \
+                "$dir/" "$host:$path/" >/dev/null 2>&1 || true
+}
+
+# Background loop: drain until a .drain-stop sentinel appears in the staging dir,
+# or the parent script ($4) exits (so an interrupted run leaves no orphan).
+_conda_drain_loop() {
+    local dir="$1" host="$2" path="$3" ppid="$4"
+    while [ ! -e "$dir/.drain-stop" ]; do
+        kill -0 "$ppid" 2>/dev/null || break
+        _conda_drain_once "$dir" "$host" "$path"
+        sleep 15
+    done
+}
+
 # conda-export [--channel DIR] [--image NAME] [--env NAME] [SPEC...]
 # Scheme 2: run `spaxi conda` in a container against the built store to convert
 # installed specs into a conda CHANNEL (default $DEPLOY_DIR/channel) that end users
 # consume with pixi -- no exposure to Spack.  spaxi runs via uv from $SPAXI_SRC
 # with the uv cache mounted (offline if deps are cached).  SPECs default to the
 # roots of --env; otherwise pass explicit specs (qualify with /hash if ambiguous).
+# All specs go to ONE spaxi process (--specs-from -) which converts them across a
+# single --jobs-wide pool; -l/-L forward spaxi's log sink and level.
 cmd_conda_export() {
-    local dest="" env="" image="${MAKENV_IMAGE}" jobs="0"; local seeds=()
+    local dest="" env="" image="${MAKENV_IMAGE}" jobs="0" log_sink="" log_level=""; local seeds=()
     while [ $# -gt 0 ]; do
         case "$1" in
             --channel) dest="${2:?--channel needs DIR or host:path}"; shift 2 ;;
@@ -772,7 +798,9 @@ cmd_conda_export() {
             --env)     env="${2:?--env needs a name}"; shift 2 ;;
             --spec)    seeds+=("${2:?--spec needs a spec}"); shift 2 ;;
             -j|--jobs) jobs="${2:?--jobs needs N}"; shift 2 ;;
-            -h|--help) echo "usage: multispack.sh conda-export [--env NAME] [--spec SPEC]... [--jobs N] [DIR-or-host:path]"; return 0 ;;
+            -l|--log-sink)  log_sink="${2:?--log-sink needs stderr|stdout|PATH}"; shift 2 ;;
+            -L|--log-level) log_level="${2:?--log-level needs debug|info|warning|error}"; shift 2 ;;
+            -h|--help) echo "usage: multispack.sh conda-export [--env NAME] [--spec SPEC]... [--jobs N] [-l SINK] [-L LEVEL] [DIR-or-host:path]"; return 0 ;;
             -*) die "conda-export: unknown option: $1" ;;
             *)  dest="$1"; shift ;;
         esac
@@ -804,11 +832,29 @@ cmd_conda_export() {
     [ -n "$env" ] || [ "${#seeds[@]}" -gt 0 ] || \
         warn "conda-export: converting the WHOLE store (1000+ specs) -- this is slow"
 
+    # For an scp target: instead of staging the whole channel and streaming at the
+    # end, drain settled .conda files to the remote *during* conversion (rsync
+    # --remove-source-files), so local disk holds only the last interval's output.
+    # repodata.json stays local until the final sync.  Falls back to end-of-run
+    # tar streaming when rsync is unavailable.
+    local drain=0 drain_pid=""
+    if [ "$scp" = 1 ] && command -v rsync >/dev/null 2>&1; then
+        drain=1
+        ssh "$rhost" "mkdir -p $(printf '%q' "$rpath")" \
+            || die "conda-export: cannot create ${rhost}:${rpath}"
+        rm -f "$outdir/.drain-stop"
+        _conda_drain_loop "$outdir" "$rhost" "$rpath" "$$" & drain_pid=$!
+        msg "conda-export: draining settled packages to ${rhost}:${rpath} during conversion (no full local copy)"
+    elif [ "$scp" = 1 ]; then
+        warn "conda-export: rsync not found -- staging the whole channel locally, streaming at end"
+    fi
+
     mapfile -t _v < <(vol_args rw)
     mapfile -t _e < <(env_args)
     "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" \
         -v "$outdir:/out" -v "${SPAXI_SRC}:/spaxi:ro" -v "${UV_BIN}:/usr/local/bin/uv:ro" \
         -v "${uvcache}:/root/.cache/uv" -e "CONDA_ENV=${env}" -e "CE_JOBS=${jobs}" \
+        -e "CE_LOG_SINK=${log_sink}" -e "CE_LOG_LEVEL=${log_level}" \
         "$img" /bin/bash -lc '
             . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
             export SPACK_ROOT="$CVMFS_ROOT/spack" SPACK_DISABLE_LOCAL_CONFIG=1 \
@@ -840,11 +886,26 @@ cmd_conda_export() {
             SPAXI="$UV_PROJECT_ENVIRONMENT/bin/spaxi"
             [ -x "$SPAXI" ] || { echo "spaxi not built at $SPAXI" >&2; exit 1; }
             echo "conda-export: handing $# spec(s) to spaxi" >&2
-            printf "%s\n" "$@" | "$SPAXI" --spack-exe "$SPACK_ROOT/bin/spack" \
-                --channel /out conda "$DEPS" -j "$CE_JOBS" --specs-from -
+            # spaxi GROUP options (logging etc.) precede the `conda` subcommand; a
+            # file log-sink is a CONTAINER path (e.g. /out/convert.log lands beside
+            # the channel on the host).
+            GOPTS=(--spack-exe "$SPACK_ROOT/bin/spack" --channel /out)
+            [ -n "$CE_LOG_SINK" ]  && GOPTS+=(-l "$CE_LOG_SINK")
+            [ -n "$CE_LOG_LEVEL" ] && GOPTS+=(-L "$CE_LOG_LEVEL")
+            printf "%s\n" "$@" | "$SPAXI" "${GOPTS[@]}" conda "$DEPS" -j "$CE_JOBS" --specs-from -
         ' sh "${seeds[@]}" || warn "conda-export: some specs failed to convert (see above)"
 
-    if [ "$scp" = 1 ]; then
+    if [ "$drain" = 1 ]; then
+        # Stop the drain, then a final sync sends repodata.json plus any packages
+        # created since the last pass; local staging is then removed entirely.
+        : > "$outdir/.drain-stop"
+        if [ -n "$drain_pid" ]; then wait "$drain_pid" 2>/dev/null || true; fi
+        msg "conda-export: final sync (repodata + stragglers) -> ${rhost}:${rpath}"
+        rsync -a --exclude='.drain-stop' "$outdir/" "$rhost:$(printf '%q' "$rpath")/" \
+            || die "conda-export: final sync failed (staging kept at $outdir)"
+        rm -rf "$outdir"
+        msg "conda-export: channel on ${rhost}:${rpath}  (no local copy retained)"
+    elif [ "$scp" = 1 ]; then
         msg "conda-export: streaming channel -> ${rhost}:${rpath}"
         tar -C "$outdir" -cf - . \
             | ssh "$rhost" "mkdir -p $(printf '%q' "$rpath") && tar -C $(printf '%q' "$rpath") -xf -" \
@@ -916,11 +977,14 @@ Deployment (get binaries to end users without Fermilab CVMFS):
   cache-client URL [DIR] write a self-contained Spack client bundle (mirror +
                          site config + setup.sh) that pulls from the HTTP cache
                          and never writes to ~/.spack
-  conda-export [--env NAME] [--spec SPEC]... [--jobs N] [DEST]
+  conda-export [--env NAME] [--spec SPEC]... [--jobs N] [-l SINK] [-L LEVEL] [DEST]
                          run `spaxi conda` to convert installed specs into a conda
                          channel for end users of pixi.  DEST is a local dir (default
                          deploy/channel) or an scp host:path.  With neither --env nor
-                         --spec, converts EVERYTHING installed (the whole store)
+                         --spec, converts EVERYTHING installed (the whole store).
+                         --jobs N sets spaxi's parallelism across the whole batch;
+                         -l/-L forward spaxi's log sink (stderr|stdout|container PATH)
+                         and level (debug|info|warning|error)
 
 Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine
