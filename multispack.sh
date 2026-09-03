@@ -82,6 +82,13 @@ CONF="${MULTISPACK_CONF:-$HERE/multispack.conf}"
 # builder so it keeps Spack and the glibc floor, then passed via `makenv --image`.
 : "${MAKENV_IMAGE:=builder}"
 
+# Where deployment artifacts (an exported buildcache, a client bundle, a conda
+# channel) are written by default.  Each is a plain directory you can serve over HTTP.
+: "${DEPLOY_DIR:=$HERE/deploy}"
+# For `conda-export`: the spaxi source checkout and the uv binary used to run it.
+: "${SPAXI_SRC:=$HOME/dev/spaxi}"
+: "${UV_BIN:=$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")}"
+
 # makenv env style: 0 => directory env under /cvmfs/.../env/<name> (addressed by
 # path); 1 => managed NAMED env (shown by `spack env list`, activated by name).
 # Communities expect managed envs for official releases; --managed overrides this.
@@ -606,6 +613,149 @@ cmd_all() {
     stage_run report     "render the HTML summary"                     -- cmd_report
 }
 
+# =============================== deployment ==================================
+# Two schemes for getting binaries to end users without Fermilab CVMFS.
+
+# cache-export [DIR]
+# Sync the binary buildcache out of the podman cache volume to a host directory
+# (default $DEPLOY_DIR/buildcache) so it can be served over HTTP.  Incremental.
+cmd_cache_export() {
+    local dir="${1:-$DEPLOY_DIR/buildcache}"
+    mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
+    msg "cache-export: ${VOL_CACHE}:/buildcache -> $dir  (incremental copy)"
+    # Copy inside a container (mounts work with the remote podman client; the raw
+    # volume mountpoint / `podman unshare` do not).  The cache is content-addressed
+    # and append-only: `cp -an` adds only new blobs; a forced `cp -a` refreshes the
+    # mutable v3/ index.  (Removed specs are not pruned -- re-mirror fresh if needed.)
+    "$ENGINE" run --rm -v "${VOL_CACHE}:/multispack/cache:ro" -v "${dir}:/out" \
+        "$BUILDER_IMG" /bin/sh -c '
+            [ -d /multispack/cache/buildcache ] || { echo "no buildcache in the volume yet" >&2; exit 1; }
+            mkdir -p /out
+            cp -an /multispack/cache/buildcache/. /out/ 2>/dev/null || true
+            [ -d /multispack/cache/buildcache/v3 ] && { mkdir -p /out/v3; cp -a /multispack/cache/buildcache/v3/. /out/v3/; }
+            du -sh /out 2>/dev/null | sed "s/^/  exported: /"
+        ' || die "cache-export failed"
+    msg "cache-export: done.  Serve it:  (cd $dir && python3 -m http.server 8080)"
+    msg "cache-export: then on a client:  ./multispack.sh cache-client http://HOST:8080"
+}
+
+# cache-client URL [DIR]
+# Write a SELF-CONTAINED Spack client bundle in DIR (default $DEPLOY_DIR/client)
+# that uses the HTTP buildcache at URL and never touches ~/.spack.  The user brings
+# their own Spack checkout (ideally ref $SPACK_REF); `source DIR/setup.sh` then
+# `spack install --no-check-signature <spec>` pulls prebuilt binaries.
+cmd_cache_client() {
+    local url="${1:?cache-client: need the buildcache HTTP URL (e.g. http://host:8080)}"
+    local dir="${2:-$DEPLOY_DIR/client}"
+    mkdir -p "$dir/config" "$dir/cache"; dir="$(cd "$dir" && pwd)"
+    cat > "$dir/config/mirrors.yaml" <<EOF
+mirrors:
+  multispack:
+    url: $url
+    signed: false
+EOF
+    # Copy the site config that governs concretization straight from the built Spack
+    # so the client concretizes to the SAME hashes the cache holds.
+    "$ENGINE" run --rm -v "${VOL_CVMFS}:/cvmfs:ro" -v "$dir:/out" "$BUILDER_IMG" /bin/sh -c '
+        S="/cvmfs/'"$CVMFS_HOST"'/spack/etc/spack"
+        for f in config.yaml packages.yaml concretizer.yaml compilers.yaml repos.yaml toolchains.yaml; do
+            [ -f "$S/$f" ] && cp "$S/$f" /out/config/ || true
+        done' || warn "cache-client: could not copy site config from the store"
+    cat > "$dir/setup.sh" <<EOF
+# Source me.  Self-contained Spack client for the multispack HTTP buildcache.
+# Bring your own Spack (ideally ref $SPACK_REF) with 'spack' on PATH, then source this.
+# Redirect Spack's user+system config to our private scope so nothing lands in ~/.spack.
+export SPACK_USER_CONFIG_PATH="$dir/config"
+export SPACK_SYSTEM_CONFIG_PATH="$dir/config"
+export SPACK_USER_CACHE_PATH="$dir/cache"
+echo "multispack client: mirror -> $url  (config scope: $dir/config)" >&2
+EOF
+    cat > "$dir/README.md" <<EOF
+# multispack buildcache client (self-contained)
+
+1. Get Spack matching ref \`$SPACK_REF\` and put \`spack\` on PATH.
+2. \`source $dir/setup.sh\`
+3. \`spack mirror list\`   # shows 'multispack' -> $url
+4. \`spack install --no-check-signature <spec>\`   # downloads prebuilt binaries
+
+Nothing is written under ~/.spack: config/cache are redirected to \`$dir\`.
+Binaries relocate out of /cvmfs into your local store via their padded \$ORIGIN
+rpaths.  For guaranteed cache hits, concretize with the same recipe repos and
+config this bundle carries (copied from the build).
+EOF
+    msg "cache-client: wrote self-contained client bundle to $dir  (see $dir/README.md)"
+}
+
+# conda-export [--channel DIR] [--image NAME] [--env NAME] [SPEC...]
+# Scheme 2: run `spaxi conda` in a container against the built store to convert
+# installed specs into a conda CHANNEL (default $DEPLOY_DIR/channel) that end users
+# consume with pixi -- no exposure to Spack.  spaxi runs via uv from $SPAXI_SRC
+# with the uv cache mounted (offline if deps are cached).  SPECs default to the
+# roots of --env; otherwise pass explicit specs (qualify with /hash if ambiguous).
+cmd_conda_export() {
+    local dir="$DEPLOY_DIR/channel" image="${MAKENV_IMAGE}" env="" ; local specs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --channel) dir="${2:?--channel needs DIR}"; shift 2 ;;
+            -i|--image) image="${2:?--image needs a value}"; shift 2 ;;
+            --env)     env="${2:?--env needs a name}"; shift 2 ;;
+            -h|--help) echo "usage: multispack.sh conda-export [--channel DIR] [--image N] [--env NAME] [SPEC...]"; return 0 ;;
+            --) shift; while [ $# -gt 0 ]; do specs+=("$1"); shift; done ;;
+            -*) die "conda-export: unknown option: $1" ;;
+            *)  specs+=("$1"); shift ;;
+        esac
+    done
+    [ -n "$env" ] || [ "${#specs[@]}" -gt 0 ] || die "conda-export: give --env NAME or explicit SPEC(s)"
+    [ -x "$UV_BIN" ] || die "conda-export: uv not found at '$UV_BIN' (set UV_BIN)"
+    [ -f "$SPAXI_SRC/pyproject.toml" ] || die "conda-export: no spaxi source at '$SPAXI_SRC' (set SPAXI_SRC)"
+    local img="${IMG_PREFIX}/${image}:${IMG_TAG}"
+    "$ENGINE" image exists "$img" 2>/dev/null || die "conda-export: image not built: ${img}"
+    mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
+    local uvcache; uvcache="$("$UV_BIN" cache dir 2>/dev/null || echo "$HOME/.cache/uv")"
+    mkdir -p "$uvcache"
+
+    msg "conda-export: spaxi conda -> $dir  (env='${env}' specs='${specs[*]}')"
+    mapfile -t _v < <(vol_args rw)
+    mapfile -t _e < <(env_args)
+    # Build the in-container spaxi invocation.  If --env, derive its installed root
+    # specs as /hash; else use the given specs.
+    local q="" a; for a in "${specs[@]}"; do q+=" $(printf '%q' "$a")"; done
+    "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" \
+        -v "$dir:/out" -v "${SPAXI_SRC}:/spaxi:ro" -v "${UV_BIN}:/usr/local/bin/uv:ro" \
+        -v "${uvcache}:/root/.cache/uv" \
+        -e "CONDA_ENV=${env}" \
+        "$img" /bin/bash -lc '
+            . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
+            export SPACK_ROOT="$CVMFS_ROOT/spack" SPACK_DISABLE_LOCAL_CONFIG=1 \
+                   SPACK_USER_CACHE_PATH=/multispack/work/spack-user-cache \
+                   TMPDIR=/multispack/work/tmp UV_CACHE_DIR=/root/.cache/uv HOME=/root \
+                   UV_PROJECT_ENVIRONMENT=/multispack/work/spaxi-venv UV_LINK_MODE=copy
+            mkdir -p "$TMPDIR"
+            set --'"$q"'
+            if [ -n "$CONDA_ENV" ]; then
+                leaf="${CONDA_ENV##*/}"; ER="$CONDA_ENV"
+                [ -d "$CVMFS_ROOT/env/$leaf" ] && ER="$CVMFS_ROOT/env/$leaf"
+                # roots of the env, as name/hash (unambiguous for spaxi)
+                for h in $(spack -e "$ER" find --no-groups --format "{name}/{hash}" 2>/dev/null); do
+                    set -- "$@" "$h"
+                done
+            fi
+            [ "$#" -gt 0 ] || { echo "conda-export: no specs to convert" >&2; exit 2; }
+            echo "conda-export: converting: $*" >&2
+            # spaxi is a setuptools project that writes egg-info at build time, but its
+            # source is mounted read-only -- copy the build essentials (static version,
+            # no .git needed) to a writable dir and build from there.
+            SPX=/multispack/work/spaxi-src; rm -rf "$SPX"; mkdir -p "$SPX"
+            ( cd /spaxi && cp -a pyproject.toml uv.lock src "$SPX"/ 2>/dev/null
+              cp -a README* LICENSE* NOTICE* "$SPX"/ 2>/dev/null || true )
+            # --frozen: use spaxi`s committed uv.lock without rewriting it; the venv
+            # lives under the writable work volume (UV_PROJECT_ENVIRONMENT).
+            exec uv run --frozen --project "$SPX" spaxi \
+                --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda --deps "$@"
+        '
+    msg "conda-export: channel at $dir.  Serve it and 'pixi' against it (see spaxi docs)."
+}
+
 usage() {
     cat <<'EOU'
 multispack.sh -- Strategy B portable Spack stack, built and validated in podman.
@@ -657,6 +807,16 @@ Custom environments:
                        --require-single PKG FAIL if PKG has >1 link/run version
                        --strict-single     FAIL on ANY link/run multi-version
                        --report            verbose (consumers, sharing)
+
+Deployment (get binaries to end users without Fermilab CVMFS):
+  cache-export [DIR]     sync the binary buildcache out of the volume to DIR
+                         (default deploy/buildcache) to serve over HTTP
+  cache-client URL [DIR] write a self-contained Spack client bundle (mirror +
+                         site config + setup.sh) that pulls from the HTTP cache
+                         and never writes to ~/.spack
+  conda-export [--channel DIR] [--env NAME] [SPEC...]
+                         run `spaxi conda` to convert installed specs into a conda
+                         channel (default deploy/channel) for end users of pixi
 
 Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine
@@ -717,6 +877,9 @@ main() {
                 done
             fi ;;
         makenv)     cmd_makenv "$@" ;;
+        cache-export)  cmd_cache_export "$@" ;;
+        cache-client)  cmd_cache_client "$@" ;;
+        conda-export)  cmd_conda_export "$@" ;;
         viewgroups) cmd_viewgroups "$@" ;;
         sbom)       cmd_sbom "$@" ;;
         report)     cmd_report ;;

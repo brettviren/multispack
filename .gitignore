@@ -5,3 +5,5 @@ meta
 envs/*/spack.lock
 envs/*/.spack-env
 envs/*/recipes
+# Deployment exports (buildcache mirror, client bundle, conda channel)
+deploy/
