@@ -64,19 +64,43 @@ concrete nodes. `concretize` returns 0.
 ## Build
 
 ```
-spack -e envs/largroups concretize -f      # succeeds as-is (repos.yaml, git recipes)
-spack -e envs/largroups install            # needs the nusofthep patch below
+./multispack.sh makenv envs/largroups/spack.yaml   # concretize + install (long)
+./multispack.sh runenv largroups                   # activate + interactive shell
 ```
 
-`install` requires the dk2nugenie fix (upstream nusofthep's genie CMake uses an
-unset `LIBXML2_FQ_DIR`). Clone + patch nusofthep-spack-recipes under `recipes/`
-and switch the `spack.yaml` include from `repos.yaml` to `repos-dev.yaml`.
+Built successfully (362 specs) with these recipe/config resolutions baked in:
+
+- **nusofthep** → `repos.yaml` points at the `brettviren/nusofthep-spack-recipes`
+  fork, branch `fix-libxml2-in-spack` (upstream dk2nugenie mis-sets `LIBXML2_FQ_DIR`).
+- **triton** → `repos.yaml`'s `fnal_art` points at a LOCAL clone under `recipes/`
+  (git-ignored) carrying `depends_on("zlib")` (upstream cc-clients can't find ZLIB).
+  Re-create it before building on a fresh checkout, or swap to a fork once the PR lands:
+  `git clone -b develop https://github.com/FNALssi/fnal_art recipes/fnal_art` then
+  add the zlib dep to `recipes/fnal_art/spack_repo/fnal_art/packages/triton/package.py`.
+- **artg4tk** → `packages.yaml` pins `@=13.00.00` (the pinned `13.0.1` has no recipe).
+- **larrecodnn (+ the `larsoft` meta) DROPPED** — see `groups/larsoft.yaml`.
+  larrecodnn 10.05.01 hard-requires TensorFlow (`find_package(TensorFlow REQUIRED)`
+  + its C++ uses it), and `py-tensorflow@2.19` needs gcc≥13 (`-mavxvnniint8`), so it
+  cannot build in this gcc@12 stack. Restore both once a gcc@12-buildable TensorFlow
+  (or a larrecodnn that makes TF optional) exists.
 
 ## Still loose / open
 
-- Everything is inside a group; the only remaining multi-version items are
-  build-only tool forks (python@3.10 for llvm/ninja, py-cython) — pin their build
-  deps if a single-python *store* matters.
-- `viewgroups` is being refocused into an **analyzer/checker** that reads this raw
-  yaml + the `spack.lock` and reports exactly these findings (per-view multi-version
-  collisions, build-only forks, unpinned shared libs, needs-DAG sanity).
+- larrecodnn / the `larsoft` umbrella (see above) — pending a TensorFlow story.
+- Build-only tool forks (python@3.10 for llvm/ninja, py-cython) — benign; pin their
+  build deps only if a single-python *store* matters.
+## Analyze / check
+
+`viewgroups` is now a read-only analyzer over this env (needs-DAG sanity, effective
+`concretizer:reuse`, multi-version link/run-vs-build-only forks, unpinned shared
+libs, per-view collisions, cross-group sharing):
+
+```
+./multispack.sh viewgroups --concretize --report --require-single python envs/largroups
+```
+
+`--concretize` re-solves (else it reuses `spack.lock`); `--require-single PKG` and
+`--strict-single` make it exit non-zero on a deployable multi-version fork. It
+reports the *effective* reuse, confirming the env's `reuse:false` overrides the
+site scope's `reuse:true`. Verified on this env: reuse=False, single link/run
+python 3.11.14 / boost 1.82.0 / eigen 3.4.1, no link/run forks.

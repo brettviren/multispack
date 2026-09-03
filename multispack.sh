@@ -385,11 +385,16 @@ cmd_makenv() {
         msg "makenv: mounting repos ${repos} -> ${CVMFS_ROOT}/repos"
     fi
 
+    # Mount the whole env DIRECTORY (not just the yaml) so relative `include:` files
+    # (repos.yaml, packages.yaml, groups/*.yaml, ...) come along; MAKENV_YAML names
+    # the manifest within it (usually spack.yaml).
+    local yamldir; yamldir="$(dirname "$yaml")"
     msg "makenv: build env '${name}' from ${yaml} in image '${image}'"
     mapfile -t _v < <(vol_args rw)
     mapfile -t _e < <(env_args)
     "$ENGINE" run --rm -i "${_v[@]}" "${repo_args[@]}" "${_e[@]}" \
-        -v "${yaml}:/multispack/input/spack.yaml:ro${SEL}" \
+        -v "${yamldir}:/multispack/input:ro${SEL}" \
+        -e "MAKENV_YAML=$(basename "$yaml")" \
         -e "MAKENV_NAME=${name}" \
         -e "MAKENV_NOCHECK=${nocheck}" \
         -e "MAKENV_IMAGE=${image}" \
@@ -406,58 +411,43 @@ cmd_makenv() {
 # /cvmfs Spack + a writable scratch area, and forwards the options.
 cmd_viewgroups() {
     [ "$DEV_MOUNTS" = 1 ] || die "viewgroups: needs DEV_MOUNTS=1 (mounts bin/ into the builder)"
-    local image="${MAKENV_IMAGE}" out="" reuse="false" verify=0 report=0 keep=0 ptimeout="" probe="" stimeout="" order="" emit=""
-    local inputs=()
+    local image="${MAKENV_IMAGE}" env="" concretize=0 report=0 strict=0
+    local reqsingle=()
     while [ $# -gt 0 ]; do
         case "$1" in
             -i|--image)  image="${2:?--image needs a value}"; shift 2 ;;
-            -o|--output) out="${2:?--output needs a value}"; shift 2 ;;
-            --reuse)     reuse="${2:?--reuse needs true|false}"; shift 2 ;;
-            --probe)     probe="${2:?--probe needs staged|independent}"; shift 2 ;;
-            --order)     order="${2:?--order needs rich|cheap|declared}"; shift 2 ;;
-            --emit)      emit="${2:?--emit needs auto|chain|lattice}"; shift 2 ;;
-            --probe-timeout) ptimeout="${2:?--probe-timeout needs SECS}"; shift 2 ;;
-            --size-timeout)  stimeout="${2:?--size-timeout needs SECS}"; shift 2 ;;
-            --verify)    verify=1; shift ;;
+            --concretize) concretize=1; shift ;;
+            --require-single) reqsingle+=("${2:?--require-single needs PKG}"); shift 2 ;;
+            --strict-single) strict=1; shift ;;
             --report)    report=1; shift ;;
-            --keep)      keep=1; shift ;;
             -h|--help)
-                echo "usage: multispack.sh viewgroups [--image N] [--reuse true|false] [--probe staged|independent] [--order rich|cheap|declared] [--emit auto|chain|lattice] [--probe-timeout SECS] [--size-timeout SECS] [-o OUT] [--verify] [--report] <input.spack.yaml> [more.yaml...]"
+                echo "usage: multispack.sh viewgroups [--image N] [--concretize] [--require-single PKG]... [--strict-single] [--report] <env-spack.yaml-or-dir>"
                 return 0 ;;
             -*) die "viewgroups: unknown option: $1" ;;
-            *)  inputs+=("$1"); shift ;;
+            *)  [ -z "$env" ] && env="$1" || die "viewgroups: unexpected argument: $1"; shift ;;
         esac
     done
-    [ "${#inputs[@]}" -gt 0 ] || die "viewgroups: missing <input.spack.yaml>"
+    [ -n "$env" ] || die "viewgroups: missing <env-spack.yaml-or-dir>"
 
     # Translate a host path under the repo to its /ms-repo mount location.
     to_ctr() {
-        local p; p="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+        local p; p="$(cd "$(dirname "$1")" 2>/dev/null && pwd)/$(basename "$1")"
         case "$p" in "$HERE"/*) printf '/ms-repo/%s\n' "${p#"$HERE"/}" ;;
             *) die "viewgroups: path must live under the repo ($HERE): $1" ;; esac
     }
+    [ -e "$env" ] || die "viewgroups: no such path: $env"
     local img="${IMG_PREFIX}/${image}:${IMG_TAG}"
     "$ENGINE" image exists "$img" 2>/dev/null \
         || die "viewgroups: image not built: ${img}  (build it: ./multispack.sh images ${image})"
 
-    local args=(python3 /opt/multispack/bin/spack-view-groups.py
-                --spack spack --workdir /multispack/work/viewgroups)
-    [ "$reuse" = "true" ] || [ "$reuse" = "false" ] || die "viewgroups: --reuse must be true|false"
-    args+=(--reuse "$reuse")
-    [ -n "$probe" ] && args+=(--probe "$probe")
-    [ -n "$order" ] && args+=(--order "$order")
-    [ -n "$emit" ] && args+=(--emit "$emit")
-    [ -n "$ptimeout" ] && args+=(--probe-timeout "$ptimeout")
-    [ -n "$stimeout" ] && args+=(--size-timeout "$stimeout")
-    [ "$verify" = 1 ] && args+=(--verify)
+    local args=(python3 /opt/multispack/bin/spack-view-groups.py --spack spack)
+    [ "$concretize" = 1 ] && args+=(--concretize)
     [ "$report" = 1 ] && args+=(--report)
-    [ "$keep" = 1 ] && args+=(--keep)
-    if [ -n "$out" ]; then args+=(-o "$(to_ctr "$out")"); fi
-    local f; for f in "${inputs[@]}"; do
-        [ -f "$f" ] || die "viewgroups: no such input: $f"; args+=("$(to_ctr "$f")")
-    done
+    [ "$strict" = 1 ] && args+=(--strict-single)
+    local p; for p in "${reqsingle[@]}"; do args+=(--require-single "$p"); done
+    args+=("$(to_ctr "$env")")
 
-    msg "viewgroups: input=${inputs[*]}  reuse=${reuse}  image=${image}"
+    msg "viewgroups: analyze ${env}  (image: ${image})"
     mapfile -t _v < <(vol_args rw)
     mapfile -t _e < <(env_args)
     # Quote the tool argv so `sh -lc` (after sourcing setup-env) runs it verbatim.
@@ -506,6 +496,51 @@ cmd_shell() {
     mapfile -t _v < <(vol_args "$mode")
     mapfile -t _e < <(env_args)
     "$ENGINE" run --rm -it "${_v[@]}" "${_e[@]}" "$img" /bin/sh -l
+}
+
+# runenv [--image NAME] <env>
+# Like `shell`, but sets up Spack and ACTIVATES a Spack environment, then drops
+# into an interactive shell inside it.  <env> resolution (done in-container):
+#   * a leaf directory under $CVMFS_ROOT/env/  -> a directory (by-path) env;
+#   * otherwise                                -> a named (managed) env.
+# A '/'-prefixed <env> is taken as a named env UNLESS its basename is such a leaf
+# directory, in which case that directory env is used.  --image defaults to builder.
+cmd_runenv() {
+    local image="builder" env=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -i|--image) image="${2:?--image needs a value}"; shift 2 ;;
+            -h|--help)
+                echo "usage: multispack.sh runenv [--image NAME] <env-name-or-dir>"; return 0 ;;
+            -*) die "runenv: unknown option: $1" ;;
+            *)  [ -z "$env" ] && env="$1" || die "runenv: unexpected argument: $1"; shift ;;
+        esac
+    done
+    [ -n "$env" ] || die "runenv: missing <env> (a name, or a leaf under ${CVMFS_ROOT}/env)"
+    local img="${IMG_PREFIX}/${image}:${IMG_TAG}"
+    "$ENGINE" image exists "$img" 2>/dev/null \
+        || die "runenv: image not built: ${img}  (build it: ./multispack.sh images ${image})"
+    # rw: `spack env activate` writes a transaction lock under the env's .spack-env.
+    mapfile -t _v < <(vol_args rw)
+    mapfile -t _e < <(env_args)
+    msg "runenv: activate '${env}' in image '${image}'"
+    "$ENGINE" run --rm -it "${_v[@]}" "${_e[@]}" -e "RUNENV_TARGET=${env}" \
+        "$img" /bin/bash -lc '
+            . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
+            E="$RUNENV_TARGET"; leaf="${E##*/}"; D=""
+            case "$E" in
+                /*) [ -d "$CVMFS_ROOT/env/$leaf" ] && D="$CVMFS_ROOT/env/$leaf" ;;
+                *)  [ -d "$CVMFS_ROOT/env/$E" ]    && D="$CVMFS_ROOT/env/$E" ;;
+            esac
+            if [ -n "$D" ]; then
+                echo "[runenv] directory env: $D" >&2
+                spack env activate -d "$D" || echo "[runenv] activate failed" >&2
+            else
+                echo "[runenv] named env: $E" >&2
+                spack env activate "$E" || echo "[runenv] activate failed (no such env?)" >&2
+            fi
+            exec bash -i
+        '
 }
 
 cmd_status() {
@@ -601,19 +636,16 @@ Custom environments:
                                       the form communities expect for releases
                        --no-check     skip the pre-install container capability gates
 
-  viewgroups [opts] <input.spack.yaml> [more.yaml...]
-                     derive an optimal grouped spack.yaml from the views declared
-                     in the input(s): concretize the views (staged in ONE needs-
-                     chained env so later views deterministically reuse earlier
-                     ones -- no reuse:true), then emit group:/needs: + one view each.
-                       --reuse true|false  concretizer:reuse for probes+output
-                       --probe staged|independent   (default staged)
-                       --order rich|cheap|declared  atomic-view stage order
-                       --emit  auto|chain|lattice   grouped-env structure
-                       --probe-timeout SECS  demote a view that exceeds it
-                       -o OUT              write grouped manifest here (repo path)
-                       --verify            re-concretize the emitted env and check
-                       --report            print the view-partition report
+  viewgroups [opts] <env-spack.yaml-or-dir>
+                     analyze & check a hand-curated grouped spack.yaml (read-only):
+                     needs-DAG sanity, effective concretizer:reuse, multi-version
+                     packages (link/run vs build-only) and which are unpinned,
+                     per-view collisions, and cross-group sharing.
+                       --concretize        run 'spack concretize -f' first
+                                           (default: reuse the env's spack.lock)
+                       --require-single PKG FAIL if PKG has >1 link/run version
+                       --strict-single     FAIL on ANY link/run multi-version
+                       --report            verbose (consumers, sharing)
 
 Validation (mounts /cvmfs read-only, installs nothing from the distro):
   validate [distro...]   default: alma8 alma9 debian12 debian13 sles15 alpine
@@ -626,6 +658,10 @@ Reporting and utility:
   report             merge meta/*.json into meta/report.html
   status             one-line summary of every phase that has run
   shell [image]      interactive shell with the volumes mounted (default builder)
+  runenv [--image NAME] <env>
+                     like shell, but activate a Spack environment first.  <env> is
+                     a leaf dir under /cvmfs/.../env (directory env) or a managed
+                     env name; --image defaults to builder
   clean              empty the work volume (stage/tmp/test)
   nuke               remove all multispack volumes and images
   all                run the whole pipeline end to end
@@ -673,6 +709,7 @@ main() {
         report)     cmd_report ;;
         status)     cmd_status ;;
         shell)      cmd_shell "$@" ;;
+        runenv)     cmd_runenv "$@" ;;
         clean)      cmd_clean ;;
         nuke)       cmd_nuke ;;
         all)        cmd_all ;;

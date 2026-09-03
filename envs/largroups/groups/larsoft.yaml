@@ -1,4 +1,11 @@
 # larsoft: the LArSoft layer, built on nusoft + wirecell (was st_larsoft_2).
+#
+# DROPPED (2026-09-02): larrecodnn (DNN reco) hard-requires TensorFlow in its
+# CMakeLists (find_package(TensorFlow REQUIRED)) and py-tensorflow@2.19 will not
+# build on gcc@12 (-mavxvnniint8 needs gcc>=13).  The `larsoft` meta-package is
+# also dropped because it depends_on larrecodnn; deploy the individual lar*
+# packages below instead.  Restore both once a gcc@12-buildable TensorFlow (or a
+# larrecodnn that makes TF optional) is sorted -- see the group README.
 definitions:
 - larsoft:
   - larana %build_compiler
@@ -15,9 +22,7 @@ definitions:
   - larpandora %build_compiler
   - larpandoracontent %build_compiler
   - larreco %build_compiler
-  - larrecodnn %build_compiler
   - larsim %build_compiler
   - larsimdnn %build_compiler
   - larsimrad %build_compiler
   - larwirecell %build_compiler
-  - larsoft %build_compiler

@@ -19,8 +19,16 @@ use_spack
 : "${MAKENV_NAME:?}"
 NOCHECK="${MAKENV_NOCHECK:-0}"
 MAKENV_IMAGE="${MAKENV_IMAGE:-?}"
-SRC=/multispack/input/spack.yaml
-[ -f "$SRC" ] || { echo "makenv: no spack.yaml bind-mounted at $SRC" >&2; exit 1; }
+SRC=/multispack/input/${MAKENV_YAML:-spack.yaml}
+[ -f "$SRC" ] || { echo "makenv: no manifest bind-mounted at $SRC" >&2; exit 1; }
+
+# Copy the WHOLE input dir into an env directory so relative `include:` files come
+# with the manifest.  $ENVD/spack.yaml is what `spack -e` reads.
+populate_env() {  # $1 = target env dir
+    mkdir -p "$1"
+    cp -rL /multispack/input/. "$1/" 2>/dev/null || cp "$SRC" "$1/spack.yaml"
+    [ "$(basename "$SRC")" = spack.yaml ] || cp "$SRC" "$1/spack.yaml"
+}
 
 # The environment can be built two ways:
 #   directory (default): an independent env dir under /cvmfs/.../env/<name>,
@@ -39,12 +47,11 @@ if [ "${MAKENV_MANAGED:-0}" = 1 ]; then
         ENVD="$(spack location -e "$MAKENV_NAME")"
         say "makenv '${MAKENV_NAME}': created managed env at ${ENVD}"
     fi
-    cp "$SRC" "${ENVD}/spack.yaml"        # keep manifest in sync with the input
+    populate_env "$ENVD"                  # keep manifest + includes in sync with input
     ENVREF="$MAKENV_NAME"
 else
     ENVD="${CVMFS_ROOT}/env/${MAKENV_NAME}"
-    mkdir -p "$ENVD"
-    cp "$SRC" "${ENVD}/spack.yaml"
+    populate_env "$ENVD"
     ENVREF="$ENVD"
 fi
 say "makenv '${MAKENV_NAME}' -> ${ENVD}  (image: ${MAKENV_IMAGE}, ref: ${ENVREF})"

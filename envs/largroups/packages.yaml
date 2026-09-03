@@ -164,12 +164,16 @@ packages:
   larrecodnn:
     require:
     - '@=10.05.01'
+    # ~tensorflow: TF 2.19 needs gcc>=13 (-mavxvnniint8), un-buildable in this gcc@12
+    # stack; the unified config peels ML/GPU out. py-torch (other DNN backend) stays.
+    - '~tensorflow'
   larsim:
     require:
     - '@=10.21.00'
   larsimdnn:
     require:
     - '@=10.02.06'
+    - '~tensorflow'
   larsimrad:
     require:
     - '@=10.01.08'
@@ -192,8 +196,10 @@ packages:
     require:
     - '@=5.0.0'
   artg4tk:
+    # 13.0.1 is not a real recipe version (no checksum -> "will not fetch"); the
+    # fnal_art recipe's latest release is 13.00.00.
     require:
-    - '@=13.0.1'
+    - '@=13.00.00'
   marley:
     require:
     - '@=1.2.1'

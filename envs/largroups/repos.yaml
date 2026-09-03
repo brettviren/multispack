@@ -8,13 +8,15 @@ repos:
     branch: main
     paths: [spack_repo/larsoft]
   nusofthep:
-    git: https://github.com/NuSoftHEP/nusofthep-spack-recipes.git
-    branch: spack-v1.0
+    # brettviren fork carrying the dk2nugenie LIBXML2_FQ_DIR fix (PR pending upstream).
+    git: https://github.com/brettviren/nusofthep-spack-recipes.git
+    branch: fix-libxml2-in-spack
     paths: [spack_repo/nusofthep]
-  fnal_art:
-    git: https://github.com/FNALssi/fnal_art.git
-    branch: develop
-    paths: [spack_repo/fnal_art]
+  # LOCAL patched clone (recipes/fnal_art) carrying a triton fix: add depends_on
+  # ("zlib") so its cc-clients sub-build can find ZLIB.  Revert to the upstream git
+  # (or a fork, like nusofthep) once that PR lands.  Path is relative to this env dir;
+  # makenv copies recipes/ along with the manifest.
+  fnal_art: ./recipes/fnal_art/spack_repo/fnal_art
   wirecell:
     git: https://github.com/WireCell/wire-cell-spack.git
     branch: master
