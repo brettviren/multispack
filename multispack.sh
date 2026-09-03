@@ -86,7 +86,7 @@ CONF="${MULTISPACK_CONF:-$HERE/multispack.conf}"
 # channel) are written by default.  Each is a plain directory you can serve over HTTP.
 : "${DEPLOY_DIR:=$HERE/deploy}"
 # For `conda-export`: the spaxi source checkout and the uv binary used to run it.
-: "${SPAXI_SRC:=$HOME/dev/spaxi}"
+: "${SPAXI_SRC:=$HERE/python/spaxi}"
 : "${UV_BIN:=$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")}"
 
 # makenv env style: 0 => directory env under /cvmfs/.../env/<name> (addressed by
@@ -833,22 +833,16 @@ cmd_conda_export() {
             SPX=/multispack/work/spaxi-src; rm -rf "$SPX"; mkdir -p "$SPX"
             ( cd /spaxi && cp -a pyproject.toml uv.lock src "$SPX"/ 2>/dev/null
               cp -a README* LICENSE* NOTICE* "$SPX"/ 2>/dev/null || true )
-            # Build the spaxi venv once (uv run also verifies it), then call spaxi
-            # PER SPEC: `spaxi conda` joins its variadic SPEC into ONE spec, so it
-            # converts a single package per call.  Tolerate per-spec failures and
-            # report; specs already in the channel are skipped (no --force).
+            # Build the spaxi venv once, then hand ALL specs to a single `spaxi conda`
+            # via --specs-from - (stdin, one per line): one process converts them all,
+            # sharing the channel and reporting per-spec failures.
             uv sync --frozen --project "$SPX" >&2 || { echo "spaxi venv build failed" >&2; exit 1; }
             SPAXI="$UV_PROJECT_ENVIRONMENT/bin/spaxi"
             [ -x "$SPAXI" ] || { echo "spaxi not built at $SPAXI" >&2; exit 1; }
-            fail=0; n=0; tot=$#
-            for s in "$@"; do
-                n=$((n+1)); echo "conda-export: [$n/$tot] $s" >&2
-                "$SPAXI" --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda "$DEPS" -j "$CE_JOBS" "$s" \
-                    || { echo "conda-export: FAILED $s" >&2; fail=$((fail+1)); }
-            done
-            echo "conda-export: converted $((tot-fail))/$tot spec(s); $fail failed" >&2
-            [ "$((tot-fail))" -gt 0 ]   # success if at least one converted
-        ' sh "${seeds[@]}" || die "conda-export: spaxi conda failed (nothing converted)"
+            echo "conda-export: handing $# spec(s) to spaxi" >&2
+            printf "%s\n" "$@" | "$SPAXI" --spack-exe "$SPACK_ROOT/bin/spack" \
+                --channel /out conda "$DEPS" -j "$CE_JOBS" --specs-from -
+        ' sh "${seeds[@]}" || warn "conda-export: some specs failed to convert (see above)"
 
     if [ "$scp" = 1 ]; then
         msg "conda-export: streaming channel -> ${rhost}:${rpath}"

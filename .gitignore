@@ -7,3 +7,5 @@ envs/*/.spack-env
 envs/*/recipes
 # Deployment exports (buildcache mirror, client bundle, conda channel)
 deploy/
+# Local spaxi checkout used by conda-export (SPAXI_SRC); clone it here yourself
+python/

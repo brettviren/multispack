@@ -76,8 +76,8 @@ their padded `$ORIGIN` rpaths.
 ## Scheme 2 — conda channel for pixi
 
 Convert installed Spack packages into conda packages so the end user drives everyday
-tooling (`pixi`) and never sees Spack.  Uses your `spaxi` (`~/dev/spaxi` by default,
-run via `uv` inside the builder).
+tooling (`pixi`) and never sees Spack.  Uses your `spaxi` (`$SPAXI_SRC`, default
+`python/spaxi` — clone it there, it is git-ignored — run via `uv` inside the builder).
 
 ### Provider
 
@@ -89,8 +89,8 @@ run via `uv` inside the builder).
 # explicit specs (qualify with /hash if ambiguous)
 ./multispack.sh conda-export --spec wire-cell-toolkit --spec larwirecell deploy/channel
 
-# EVERYTHING installed (the whole store) -- spaxi converts one spec per call, so
-# this loops over ~1200 specs (slow); per-spec failures are reported, not fatal.
+# EVERYTHING installed (the whole store) -- all specs are handed to ONE spaxi
+# process (via --specs-from -); per-spec failures are reported, not fatal.
 ./multispack.sh conda-export --jobs 0 deploy/channel
 
 # straight to another host (staged locally, then tar-streamed over ssh)
@@ -113,7 +113,7 @@ pixi init myproj && cd myproj
 pixi add wire-cell-toolkit        # or: spaxi add-spec 'wire-cell-toolkit@0.37.1'
 ```
 
-See the spaxi docs (`~/dev/spaxi/README.org`) for the pixi-side details (channel URL,
+See the spaxi docs (`python/spaxi/README.org`) for the pixi-side details (channel URL,
 the `__glibc` virtual, disambiguation).
 
 ---
