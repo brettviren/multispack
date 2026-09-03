@@ -833,9 +833,22 @@ cmd_conda_export() {
             SPX=/multispack/work/spaxi-src; rm -rf "$SPX"; mkdir -p "$SPX"
             ( cd /spaxi && cp -a pyproject.toml uv.lock src "$SPX"/ 2>/dev/null
               cp -a README* LICENSE* NOTICE* "$SPX"/ 2>/dev/null || true )
-            exec uv run --frozen --project "$SPX" spaxi \
-                --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda "$DEPS" -j "$CE_JOBS" "$@"
-        ' sh "${seeds[@]}" || die "conda-export: spaxi conda failed"
+            # Build the spaxi venv once (uv run also verifies it), then call spaxi
+            # PER SPEC: `spaxi conda` joins its variadic SPEC into ONE spec, so it
+            # converts a single package per call.  Tolerate per-spec failures and
+            # report; specs already in the channel are skipped (no --force).
+            uv sync --frozen --project "$SPX" >&2 || { echo "spaxi venv build failed" >&2; exit 1; }
+            SPAXI="$UV_PROJECT_ENVIRONMENT/bin/spaxi"
+            [ -x "$SPAXI" ] || { echo "spaxi not built at $SPAXI" >&2; exit 1; }
+            fail=0; n=0; tot=$#
+            for s in "$@"; do
+                n=$((n+1)); echo "conda-export: [$n/$tot] $s" >&2
+                "$SPAXI" --spack-exe "$SPACK_ROOT/bin/spack" --channel /out conda "$DEPS" -j "$CE_JOBS" "$s" \
+                    || { echo "conda-export: FAILED $s" >&2; fail=$((fail+1)); }
+            done
+            echo "conda-export: converted $((tot-fail))/$tot spec(s); $fail failed" >&2
+            [ "$((tot-fail))" -gt 0 ]   # success if at least one converted
+        ' sh "${seeds[@]}" || die "conda-export: spaxi conda failed (nothing converted)"
 
     if [ "$scp" = 1 ]; then
         msg "conda-export: streaming channel -> ${rhost}:${rpath}"

@@ -89,7 +89,8 @@ run via `uv` inside the builder).
 # explicit specs (qualify with /hash if ambiguous)
 ./multispack.sh conda-export --spec wire-cell-toolkit --spec larwirecell deploy/channel
 
-# EVERYTHING installed (the whole store) -- slow; -j0 uses one worker per CPU
+# EVERYTHING installed (the whole store) -- spaxi converts one spec per call, so
+# this loops over ~1200 specs (slow); per-spec failures are reported, not fatal.
 ./multispack.sh conda-export --jobs 0 deploy/channel
 
 # straight to another host (staged locally, then tar-streamed over ssh)
