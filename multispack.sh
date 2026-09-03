@@ -616,26 +616,97 @@ cmd_all() {
 # =============================== deployment ==================================
 # Two schemes for getting binaries to end users without Fermilab CVMFS.
 
-# cache-export [DIR]
-# Sync the binary buildcache out of the podman cache volume to a host directory
-# (default $DEPLOY_DIR/buildcache) so it can be served over HTTP.  Incremental.
+# True if $1 looks like an scp target ([user@]host:path), not a local path.
+_is_scp() {
+    case "$1" in
+        *:*) case "${1%%:*}" in */*) return 1 ;; *) return 0 ;; esac ;;
+        *)   return 1 ;;
+    esac
+}
+
+# cache-export [--env NAME] [--spec SEED]... [DEST]
+# Export the binary buildcache so it can be served over HTTP.  DEST is a local dir
+# (default $DEPLOY_DIR/buildcache) OR an scp target [user@]host:path.
+#   * no --env/--spec  -> the WHOLE cache (a fast content-addressed copy).
+#   * --env NAME       -> only that environment's packages.
+#   * --env NAME --spec SEED...  -> only the concrete closures of SEED (in NAME's
+#                         recipe repos), re-pushed as a fresh subset mirror.
+# To an scp target the export is TAR-STREAMED through ssh: the full cache never
+# lands on a local filesystem (a --spec/--env subset is staged bounded, then streamed).
 cmd_cache_export() {
-    local dir="${1:-$DEPLOY_DIR/buildcache}"
-    mkdir -p "$dir"; dir="$(cd "$dir" && pwd)"
-    msg "cache-export: ${VOL_CACHE}:/buildcache -> $dir  (incremental copy)"
-    # Copy inside a container (mounts work with the remote podman client; the raw
-    # volume mountpoint / `podman unshare` do not).  The cache is content-addressed
-    # and append-only: `cp -an` adds only new blobs; a forced `cp -a` refreshes the
-    # mutable v3/ index.  (Removed specs are not pruned -- re-mirror fresh if needed.)
-    "$ENGINE" run --rm -v "${VOL_CACHE}:/multispack/cache:ro" -v "${dir}:/out" \
-        "$BUILDER_IMG" /bin/sh -c '
-            [ -d /multispack/cache/buildcache ] || { echo "no buildcache in the volume yet" >&2; exit 1; }
-            mkdir -p /out
-            cp -an /multispack/cache/buildcache/. /out/ 2>/dev/null || true
-            [ -d /multispack/cache/buildcache/v3 ] && { mkdir -p /out/v3; cp -a /multispack/cache/buildcache/v3/. /out/v3/; }
-            du -sh /out 2>/dev/null | sed "s/^/  exported: /"
-        ' || die "cache-export failed"
-    msg "cache-export: done.  Serve it:  (cd $dir && python3 -m http.server 8080)"
+    local dest="" env=""; local seeds=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --env)  env="${2:?--env needs a name}"; shift 2 ;;
+            --spec) seeds+=("${2:?--spec needs a spec}"); shift 2 ;;
+            -h|--help) echo "usage: multispack.sh cache-export [--env NAME] [--spec SEED]... [DIR-or-host:path]"; return 0 ;;
+            -*) die "cache-export: unknown option: $1" ;;
+            *)  dest="$1"; shift ;;
+        esac
+    done
+    local subset=0
+    { [ -n "$env" ] || [ "${#seeds[@]}" -gt 0 ]; } && subset=1
+    [ "$subset" = 1 ] && [ -z "$env" ] && die "cache-export: --spec requires --env (for the recipe repos)"
+    mapfile -t _e < <(env_args)
+
+    # In-container prologue for a subset push: source spack, resolve the env to ER,
+    # and (in the caller) push to a mirror.  Seeds arrive as "$@" (all of env if none).
+    local push_prologue='
+        . "$CVMFS_ROOT/spack/share/spack/setup-env.sh"
+        export SPACK_ROOT="$CVMFS_ROOT/spack" SPACK_DISABLE_LOCAL_CONFIG=1 \
+               SPACK_USER_CACHE_PATH=/multispack/work/spack-user-cache TMPDIR=/multispack/work/tmp
+        mkdir -p "$TMPDIR"
+        leaf="${CE_ENV##*/}"; ER="$CE_ENV"; [ -d "$CVMFS_ROOT/env/$leaf" ] && ER="$CVMFS_ROOT/env/$leaf"'
+
+    if _is_scp "${dest:-}"; then
+        local rhost="${dest%%:*}" rpath="${dest#*:}"
+        [ -n "$rpath" ] || die "cache-export: scp target must be host:path"
+        command -v ssh >/dev/null || die "cache-export: ssh not found on this host"
+        local rtar="mkdir -p $(printf '%q' "$rpath") && tar -C $(printf '%q' "$rpath") -xf -"
+        if [ "$subset" = 1 ]; then
+            msg "cache-export: streaming subset (env=$env specs='${seeds[*]}') -> ${rhost}:${rpath}"
+            mapfile -t _v < <(vol_args rw)
+            "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" -e "CE_ENV=$env" "$BUILDER_IMG" /bin/sh -lc "
+                ${push_prologue}
+                ST=/multispack/work/cache-stage; rm -rf \"\$ST\"; mkdir -p \"\$ST\"
+                spack -e \"\$ER\" buildcache push --unsigned --update-index \"file://\$ST\" \"\$@\" >&2
+                tar -C \"\$ST\" -cf - . ; rm -rf \"\$ST\"
+            " sh "${seeds[@]}" | ssh "$rhost" "$rtar" || die "cache-export: subset stream failed"
+        else
+            msg "cache-export: streaming FULL cache -> ${rhost}:${rpath}  (no local copy)"
+            "$ENGINE" run --rm -i -v "${VOL_CACHE}:/multispack/cache:ro" "$BUILDER_IMG" \
+                /bin/sh -c '[ -d /multispack/cache/buildcache ] || { echo no buildcache >&2; exit 1; }; tar -C /multispack/cache/buildcache -cf - .' \
+                | ssh "$rhost" "$rtar" || die "cache-export: full stream failed"
+        fi
+        msg "cache-export: streamed to ${rhost}:${rpath} -- serve it there over HTTP"
+        return 0
+    fi
+
+    # ---- local directory destination ----
+    dest="${dest:-$DEPLOY_DIR/buildcache}"; mkdir -p "$dest"; dest="$(cd "$dest" && pwd)"
+    if [ "$subset" = 1 ]; then
+        msg "cache-export: subset (env=$env specs='${seeds[*]}') -> $dest"
+        mapfile -t _v < <(vol_args rw)
+        "$ENGINE" run --rm -i "${_v[@]}" "${_e[@]}" -e "CE_ENV=$env" -v "$dest:/out" \
+            "$BUILDER_IMG" /bin/sh -lc "
+                ${push_prologue}
+                spack -e \"\$ER\" buildcache push --unsigned --update-index file:///out \"\$@\"
+            " sh "${seeds[@]}" || die "cache-export: subset push failed"
+    else
+        msg "cache-export: FULL cache -> $dest  (content-addressed copy)"
+        # Copy inside a container (bind mounts work with the remote podman client; the
+        # raw volume mountpoint / `podman unshare` do not).  Append-only: `cp -an` adds
+        # new blobs; a forced `cp -a` refreshes the mutable v3/ index.
+        "$ENGINE" run --rm -v "${VOL_CACHE}:/multispack/cache:ro" -v "${dest}:/out" \
+            "$BUILDER_IMG" /bin/sh -c '
+                [ -d /multispack/cache/buildcache ] || { echo "no buildcache in the volume yet" >&2; exit 1; }
+                mkdir -p /out
+                cp -an /multispack/cache/buildcache/. /out/ 2>/dev/null || true
+                [ -d /multispack/cache/buildcache/v3 ] && { mkdir -p /out/v3; cp -a /multispack/cache/buildcache/v3/. /out/v3/; }
+                du -sh /out 2>/dev/null | sed "s/^/  exported: /"
+            ' || die "cache-export failed"
+    fi
+    msg "cache-export: done.  Serve it:  (cd $dest && python3 -m http.server 8080)"
     msg "cache-export: then on a client:  ./multispack.sh cache-client http://HOST:8080"
 }
 
@@ -809,8 +880,11 @@ Custom environments:
                        --report            verbose (consumers, sharing)
 
 Deployment (get binaries to end users without Fermilab CVMFS):
-  cache-export [DIR]     sync the binary buildcache out of the volume to DIR
-                         (default deploy/buildcache) to serve over HTTP
+  cache-export [--env NAME] [--spec SEED]... [DEST]
+                         export the buildcache to serve over HTTP.  DEST is a local
+                         dir (default deploy/buildcache) or an scp host:path (the
+                         full cache is tar-streamed, never copied locally).  --env
+                         limits to one env; --spec SEED (needs --env) to seed closures
   cache-client URL [DIR] write a self-contained Spack client bundle (mirror +
                          site config + setup.sh) that pulls from the HTTP cache
                          and never writes to ~/.spack
