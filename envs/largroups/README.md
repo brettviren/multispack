@@ -68,6 +68,11 @@ concrete nodes. `concretize` returns 0.
 ./multispack.sh runenv largroups                   # activate + interactive shell
 ```
 
+`runenv` only *activates* the env; since it is `view: false`, run
+`spack load larwirecell` (etc.) to put `lar`/`wire-cell` on `PATH`. On a minimal
+distro, build a `-run` image first (bare distro + python3 + git):
+`./multispack.sh images debian13-run && ./multispack.sh runenv --image debian13-run largroups`.
+
 Built successfully (362 specs) with these recipe/config resolutions baked in:
 
 - **nusofthep** → `repos.yaml` points at the `brettviren/nusofthep-spack-recipes`

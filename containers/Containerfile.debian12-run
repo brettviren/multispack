@@ -1,0 +1,13 @@
+# multispack RUNTIME image: debian12-run  (see Containerfile.debian13-run for the
+# rationale).  Bare debian12 + the minimal packages to run Spack tooling
+# (multispack.sh runenv): python3 (Spack is Python; needs the full stdlib incl.
+# ctypes) and git (Spack consults git repos / git-versioned specs on activate).
+# The bare `debian12` validator stays empty on purpose; do not add these there.
+FROM docker.io/library/debian:12-slim
+LABEL org.opencontainers.image.title="multispack runtime debian12" \
+      org.opencontainers.image.description="Debian 12 + python3 + git: run Spack tooling against the /cvmfs store"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 git \
+    && rm -rf /var/lib/apt/lists/*
+COPY tests /opt/multispack/tests
+CMD ["/bin/bash", "-l"]

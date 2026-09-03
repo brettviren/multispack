@@ -1,0 +1,27 @@
+# multispack RUNTIME image: debian13-run
+# Debian 13 trixie (glibc 2.41) + the MINIMAL packages needed to RUN Spack tooling
+# (`multispack.sh runenv`): activate an environment and `spack load` installed specs.
+#
+# This is DISTINCT from the bare `debian13` validator, which installs NOTHING on
+# purpose to prove the shipped software runs on the glibc floor alone (and whose
+# run-validation.sh conditionally uses python3 -- so do NOT add python here).
+#
+# What is added, and why (found empirically on debian13):
+#   python3   Spack IS a Python program and needs the full stdlib (ctypes in
+#             particular), so python3-minimal is NOT enough.
+#   git       Spack consults git package repos and git-versioned specs (e.g.
+#             larfinder@develop) when activating an environment.
+# The SHIPPED binaries (lar, wire-cell, root, ...) still run from /cvmfs on the
+# glibc floor; these two only make the Spack CLI usable on this distro.
+FROM docker.io/library/debian:13-slim
+
+LABEL org.opencontainers.image.title="multispack runtime debian13" \
+      org.opencontainers.image.description="Debian 13 + python3 + git: run Spack tooling against the /cvmfs store"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY tests /opt/multispack/tests
+
+CMD ["/bin/bash", "-l"]

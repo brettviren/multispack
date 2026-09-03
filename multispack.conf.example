@@ -55,6 +55,9 @@
 # needs to BUILD C++ (see containers/Containerfile.*-devel).  `compiler-validate`
 # runs these too, so its compile-run row passes (bare validators skip it).
 #DEVEL_VALIDATORS='alma8-devel alma9-devel debian12-devel debian13-devel sles15-devel'
+# Runtime images (bare distro + python3 + git) for `runenv` on a minimal distro.
+# Not built by default; `multispack.sh images debian13-run` builds one on demand.
+#RUN_VALIDATORS='alma8-run alma9-run debian12-run debian13-run sles15-run'
 # Default build container for `makenv`.  Must run Spack AND supply OS-level build
 # deps; the builder is manylinux base + Spack prereqs + glibc-dev.  A CUDA build
 # image should be built FROM the builder and passed as `makenv --image`.
