@@ -1,10 +1,15 @@
 # A small, self-contained FOSS desktop stack for exercising `makenv`.
 #
-# Four end-user applications -- the Emacs editor, the fish shell, the kitty
-# terminal and the herbstluftwm tiling window manager -- pulling a healthy but
-# not enormous dependency closure (freetype/harfbuzz/fontconfig, libpng, the
-# core X client libraries, ncurses, ...).  It gives a realistic multi-hundred-
-# node build without the DUNE/LArSoft weight and its long compile times.
+# End-user applications -- the Emacs editor, the fish shell and the herbstluftwm
+# tiling window manager -- pulling a healthy but not enormous dependency closure
+# (freetype/fontconfig, libpng, the core X client libraries, ncurses, ...).  It
+# gives a realistic multi-hundred-node build without the DUNE/LArSoft weight and
+# its long compile times.
+#
+# NOTE: the kitty terminal was dropped -- its GL stack drags in mesa -> llvm@22,
+# which balloons the closure and its compile time (and llvm failed to build on
+# this glibc-2.28 toolchain).  Add it back with `- kitty %gcc@14` if you want it
+# and can spare the llvm build.
 #
 # The Strategy B contract (target=x86_64_v3, glibc external, install-tree
 # padding/projections) comes from the SITE config that phase-bootstrap.sh
@@ -29,16 +34,15 @@ spack:
   # the latest (30.2), a terminal Emacs.
   - emacs %gcc@14
   - fish %gcc@14
-  - kitty %gcc@14
   - herbstluftwm %gcc@14
 
   concretizer:
     # Reuse what the toolchain already put in the store (gcc-runtime, etc.);
-    # unify the four apps into one coherent set of shared dependencies.
+    # unify the apps into one coherent set of shared dependencies.
     unify: true
     reuse: true
 
-  # A merged view so the apps land on one PATH (bin/emacs, bin/fish, bin/kitty,
+  # A merged view so the apps land on one PATH (bin/emacs, bin/fish,
   # bin/herbstluftwm).  makenv deploys the env under /cvmfs/.../env/foss-desktop.
   view:
     default:
