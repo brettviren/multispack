@@ -1,32 +1,42 @@
 #+title: multispack = manylinux + Spack
 
-This follows the lead of manylinux which is used to build the shared Python ecosystem of binary packages.
+* Introduction
 
-The basic idea of multispack:
+*multispack* uses Spack to build against a "floor" glibc version (2.28) so that the resulting binaries run on most current and future glibc/Linux distributions.  This basic idea is shared by [[https://github.com/pypa/manylinux][manylinux]] which is used to build the general Python ecosystem.
 
-1. Pick a "base glibc" version older or equal to the version of the target set of Linux distros.
-2. Define a minimal "base" container with a Linux distro providing the "base glibc".
-3. Perform a one-time "bootstrap ladder" to produce a "builder" container with Spack-built compilers and no OS compilers.
-4. Use "builder" container as a base for all Spack builds.  
+* Additional optional features
 
-This idea works because glibc guarantees forward-compatibility.  Code compiled
-against old glibc can run on new glibc.  A good "base glibc" currently is 2.28
-which is what is provided by Alma 8 and manylinux and supports Debian 12, 13,
-Alma 8 and 9 and SLES 15 (NERSC's distro) and is expected to support many future
-and different distros.
+- Build in podman containers for hermetic, reproducible builds and to provide a post-EOL build environment.
+- Factor large ecosystems into Spack Environment "groups" to keep concretization times reasonable.
+- Integrate [[https://github.com/brettviren/spaxi][spaxi]] to export the Spack-built binaries to Conda package channels that can be installed with [[https://pixi.prefix.dev/][pixi]].
 
-The build ladder:
-#+begin_example
-  OS compiler -> Spack-built compilers -> Spack-built compilers
-#+end_example
+* Outline of a multispack build:
 
-The use of the "builder" container is not strictly needed but:
-- Protects against eventual end-of-life of the "base glibc" provider.  We can run Alma 8 in container long after it is "illegal" to run it as a host.
-- Is "maximally hermetic" in that the minimalness and container definition precisely defines the basis of all our software builds without unintentional "leakage" of uncaptured OS-specifics.
-- Enables many benefits we can exploit (CI, multi-computer parallel builds, user-build request submission mechanisms).
+1. Pick the "base glibc" version (2.28) and a distro that provides it (Alma 8).
+2. Define a minimal "base" container providing both including as host GCC.
+3. Perform a one-time "bootstrap ladder" to produce a "builder" container with Spack and Spack-built compilers and no OS-provided compilers.
+4. Use "builder" container as a base for all Spack builds.
+5. Deploy the binaries in interesting ways.
 
-This "multispack" package is a proof of concept.  The "multispack.sh" script provides a driver for exercising and validating the idea.  For initial help:
+* Deploying binaries
 
-#+begin_example
-$ ./multispack.sh
-#+end_example
+With glibc 2.28, the binaries work on Debian 12+ Alma 8+ and SLES 15+ (NERSC's
+distro) and is expected to support all other and future distros with suitably
+newer glibc.
+
+Supported deployments:
+
+- Simply use the resulting podman volumes holding Spack Install area and binary buildcache.
+- Export the buildcache to be served over HTTP for external Spack installs.
+- Export the Spack Install area to a Conda package channel for use with pixi.
+- more t.b.d.
+
+* Multispack caveats 
+
+- Linux + glibc only :: The implementation picks glibc but the pattern may work with others such as [[https://musl.libc.org/][musl]] using [[https://alpinelinux.org/][alpine linux]] to provide the "builder" container.  It may be applicable to Apple and Microsoft operating systems but I have no personal interest in that.
+- Relies on glibc contract :: glibc does not remove symbols in new versions that were added in past versions. If that contract breaks, binaries build on glibc 2.28 may not work on subsequent glibc-based distros.  glibc 2.28 was released in 2018 and (on AMD64) supports back to =GLIBC_2.2.5=  which was released in 2002.  Given this long history, even if the contract breaks it likely would "merely" require upgrading the "builder" container and dropping support for what would likely be already obsolete runtime.  (Eg, a hypothetical future could see the need to drop support for Alma 12 in order to support glibc on Alma 22).
+
+* Development
+
+multispack is in a phase of super fast development.  Current drive is to consolidate the proof of principle into a well-integrated Python package (=mspack=).  This will then be the basis for how to extend to support long-horizon life-cycle of software ecosystem version and build management.
+
