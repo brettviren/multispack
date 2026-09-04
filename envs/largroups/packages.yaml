@@ -84,6 +84,15 @@ packages:
   tbb:
     require:
     - builtin.intel-oneapi-tbb
+  py-matplotlib:
+    # matplotlib's meson build defaults to b_lto=true (-flto=auto).  Under Spack's
+    # parallel build, GCC's lto-wrapper spawns the AlmaLinux-8 system make (4.2.1)
+    # which cannot parse gmake 4.4's 'fifo:' jobserver, so the link dies with
+    # "invalid --jobserver-auth string 'fifo:...'".  Disable LTO for it (a plotting
+    # lib gains little from LTO); verified it then builds cleanly.
+    require:
+    - 'cxxflags=-fno-lto'
+    - 'ldflags=-fno-lto'
   artdaq-core:
     require:
     - '@v3_11_01'
