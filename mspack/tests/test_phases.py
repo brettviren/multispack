@@ -74,3 +74,68 @@ def test_compiler_delegates_to_phase_script(tmp_path):
     run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
     assert "/opt/multispack/bin/phase-compiler.sh" in run
     assert any(a.startswith("GCC_TARGET_SPEC=") for a in run)
+
+
+def _env_yaml(tmp_path, dirname="myenv"):
+    d = tmp_path / dirname
+    d.mkdir()
+    y = d / "spack.yaml"
+    y.write_text("spack:\n  specs: [emacs]\n")
+    return y
+
+
+def test_makenv_wires_input_mount_and_env(tmp_path):
+    cfg = _repo(tmp_path)
+    yaml = _env_yaml(tmp_path)
+    eng = Engine(dry_run=True)
+    phases.makenv(cfg, eng, str(yaml))
+    run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
+    joined = " ".join(run)
+    assert cfg.builder_img in run
+    assert "/opt/multispack/bin/phase-makenv.sh" in run
+    assert f"{yaml.parent}:/multispack/input:ro" in joined
+    assert "MAKENV_YAML=spack.yaml" in run
+    assert "MAKENV_NAME=myenv" in run            # defaults to parent dir name
+    assert "MAKENV_MANAGED=0" in run
+    assert "MAKENV_NOCHECK=0" in run
+    assert "-i" in run                           # interactive
+    # the standard build env is present too
+    assert any(a.startswith("MULTISPACK_TARGET=") for a in run)
+
+
+def test_makenv_explicit_name_repos_managed(tmp_path):
+    cfg = _repo(tmp_path)
+    yaml = _env_yaml(tmp_path)
+    repos = tmp_path / "recipes"
+    repos.mkdir()
+    eng = Engine(dry_run=True)
+    phases.makenv(cfg, eng, str(yaml), name="rel-2026", repos=str(repos),
+                  managed=True, nocheck=True)
+    run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
+    joined = " ".join(run)
+    assert "MAKENV_NAME=rel-2026" in run
+    assert "MAKENV_MANAGED=1" in run
+    assert "MAKENV_NOCHECK=1" in run
+    assert f"{repos}:{cfg.cvmfs_root}/repos:ro" in joined
+    assert f"MAKENV_REPOS={repos}" in run
+
+
+def test_makenv_bad_name_rejected(tmp_path):
+    cfg = _repo(tmp_path)
+    yaml = _env_yaml(tmp_path)
+    eng = Engine(dry_run=True)
+    try:
+        phases.makenv(cfg, eng, str(yaml), name="bad/name")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_makenv_missing_yaml(tmp_path):
+    cfg = _repo(tmp_path)
+    eng = Engine(dry_run=True)
+    try:
+        phases.makenv(cfg, eng, str(tmp_path / "nope.yaml"))
+        assert False, "expected FileNotFoundError"
+    except FileNotFoundError:
+        pass

@@ -112,6 +112,10 @@ class Engine:
         rc, _ = self._capture([self.engine, "volume", "exists", name])
         return rc == 0
 
+    def image_exists(self, image: str) -> bool:
+        rc, _ = self._capture([self.engine, "image", "exists", image])
+        return rc == 0
+
     def volume_create(self, name: str) -> None:
         self._exec([self.engine, "volume", "create", name])
 

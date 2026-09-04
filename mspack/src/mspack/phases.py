@@ -11,11 +11,16 @@ there is a single source of build truth during the transition.
 """
 
 import json
+import re
 from pathlib import Path
 
 from .config import Config
 from .container import Engine
 from .meta import stage
+
+# A makenv env name must be a single, simple path component (it becomes a dir
+# under /cvmfs/.../env or a managed env name).
+_ENV_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # The layout seeded onto the volumes (== cmd_volumes in multispack.sh).
 _SEED_DIRS = [
@@ -86,3 +91,60 @@ def compiler(cfg: Config, engine: Engine) -> None:
     _in_builder(cfg, engine, "compiler",
                 f"build {cfg['GCC_SPEC']} then {cfg['GCC_TARGET_SPEC']}",
                 "/opt/multispack/bin/phase-compiler.sh")
+
+
+def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,
+           name: str | None = None, repos: str | None = None,
+           managed: bool | None = None, nocheck: bool = False) -> None:
+    """Concretize + install an arbitrary Spack environment into the shared store.
+
+    Delegates the build to bin/phase-makenv.sh in the build image.  The whole
+    env DIRECTORY (not just the yaml) is mounted at /multispack/input so relative
+    ``include:``/``repos:`` files come along; MAKENV_YAML names the manifest.  A
+    ``repos`` dir of assembled custom recipes is bound at ``$spack/../repos``.
+    Not a fixed-order phase, so it writes no numbered meta record (the phase
+    script still writes meta/makenv-<name>.detail.json); output streams live.
+    """
+    image = image or cfg.get("MAKENV_IMAGE", "builder")
+    yaml_path = Path(yaml).resolve()
+    if not yaml_path.is_file():
+        raise FileNotFoundError(f"makenv: no such file: {yaml}")
+
+    if name is None:                         # default: the yaml's parent dir name
+        name = yaml_path.parent.name or "custom"
+    if not _ENV_NAME_RE.match(name):
+        raise ValueError(
+            f"makenv: --name must be a simple path component: '{name}'")
+
+    img = cfg.image(image)
+    if not engine.image_exists(img):
+        raise FileNotFoundError(
+            f"makenv: image not built: {img} (build it: mspack images {image})")
+
+    if managed is None:
+        managed = cfg.get("MAKENV_MANAGED", "0") == "1"
+
+    sel = cfg.sel
+    mounts = cfg.volume_mounts(ro=False)
+    repos_abs = ""
+    if repos:
+        repos_path = Path(repos).resolve()
+        if not repos_path.is_dir():
+            raise FileNotFoundError(f"makenv: --repos is not a directory: {repos}")
+        repos_abs = str(repos_path)
+        mounts += ["-v", f"{repos_abs}:{cfg.cvmfs_root}/repos:ro{sel}"]
+        print(f"[mspack] makenv: mounting repos {repos_abs} -> {cfg.cvmfs_root}/repos")
+    mounts += ["-v", f"{yaml_path.parent}:/multispack/input:ro{sel}"]
+
+    env = dict(cfg.container_env())
+    env.update({
+        "MAKENV_YAML": yaml_path.name,
+        "MAKENV_NAME": name,
+        "MAKENV_NOCHECK": "1" if nocheck else "0",
+        "MAKENV_IMAGE": image,
+        "MAKENV_REPOS": repos_abs,
+        "MAKENV_MANAGED": "1" if managed else "0",
+    })
+    print(f"[mspack] makenv: build env '{name}' from {yaml_path} in image '{image}'")
+    engine.run(img, ["/opt/multispack/bin/phase-makenv.sh"],
+               mounts=mounts, env=env, rm=True, interactive=True)

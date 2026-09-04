@@ -18,8 +18,8 @@ src/mspack/
   config.py     # defaults mirroring multispack.sh; reads multispack.conf + env
   container.py  # the one podman seam (argv construction + tee'd exec)
   meta.py       # phase records, stage_run-compatible (bin/report.py reads them)
-  phases.py     # volumes, images (native); bootstrap, compiler (delegate)
-  cli.py        # Click CLI: mspack <phase> / mspack config
+  phases.py     # volumes, images (native); bootstrap, compiler, makenv (delegate)
+  cli.py        # Click CLI: mspack <phase> / mspack makenv / mspack config
   deploy/       # deployment methods behind a plugin registry (entry points)
 ```
 
@@ -33,6 +33,7 @@ uv run mspack volumes                                # create + seed volumes
 uv run mspack images builder                         # build the builder image
 uv run mspack bootstrap                              # clone Spack, site config
 uv run mspack compiler                               # build the GCC ladder
+uv run mspack makenv ../envs/foss-desktop/spack.yaml # build an arbitrary env
 uv run --extra dev pytest -q                         # unit tests
 ```
 

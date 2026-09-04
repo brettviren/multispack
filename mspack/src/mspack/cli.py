@@ -50,10 +50,10 @@ def _fail(msg: str):
     sys.exit(1)
 
 
-def _run(fn, *args):
+def _run(fn, *args, **kwargs):
     try:
-        fn(*args)
-    except (ContainerError, FileNotFoundError, OSError) as err:
+        fn(*args, **kwargs)
+    except (ContainerError, FileNotFoundError, ValueError, OSError) as err:
         _fail(str(err))
 
 
@@ -84,6 +84,26 @@ def bootstrap(ctx):
 def compiler(ctx):
     """Build the GCC ladder (GCC_SPEC then the GCC_TARGET_SPEC payload)."""
     _run(phases.compiler, ctx.obj.cfg, ctx.obj.engine)
+
+
+@cli.command()
+@click.argument("spack_yaml", type=click.Path(dir_okay=False))
+@click.option("-i", "--image", default=None,
+              help="build image (default: MAKENV_IMAGE, i.e. builder).")
+@click.option("-n", "--name", default=None,
+              help="env name under /cvmfs/env (default: the yaml's parent dir).")
+@click.option("-r", "--repos", default=None, type=click.Path(file_okay=False),
+              help="assembled custom recipe repos, mounted at $spack/../repos.")
+@click.option("--managed/--directory", "managed", default=None,
+              help="managed named env vs by-path directory env "
+                   "(default: MAKENV_MANAGED).")
+@click.option("--no-check", "nocheck", is_flag=True,
+              help="skip the pre-install container capability gates.")
+@click.pass_context
+def makenv(ctx, spack_yaml, image, name, repos, managed, nocheck):
+    """Concretize + install an arbitrary Spack env (SPACK_YAML) into the store."""
+    _run(phases.makenv, ctx.obj.cfg, ctx.obj.engine, spack_yaml,
+         image=image, name=name, repos=repos, managed=managed, nocheck=nocheck)
 
 
 @cli.command("config")
