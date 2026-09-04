@@ -39,26 +39,88 @@ install_rung() {  # install_rung <full spec...> ; echoes the installed prefix
 
 die_rung() { echo "compiler phase: $*" >&2; exit 1; }
 
-# --- rung 1: base gcc 8.5 builds GCC_SPEC ------------------------------------
-say "installing ${GCC_SPEC} languages=${GCC_LANGS} target=${TARGET} (built by base gcc)"
-GCC_PREFIX="$(install_rung ${GCC_SPEC} languages=${GCC_LANGS} target=${TARGET})"
-[ -n "${GCC_PREFIX}" ] || die_rung "no prefix for ${GCC_SPEC}"
-say "spack ${GCC_SPEC} at ${GCC_PREFIX}"
+hash_of() { basename "$1" | sed 's/.*-//'; }   # <name>-<ver>-<hash> -> <hash>
 
-# Register it as a usable compiler so GCC_TARGET_SPEC can be built with %GCC_SPEC.
-# (This is also what creates the duplicate external the hash lookup above copes
-# with, so it must happen only after GCC_PREFIX is resolved.)
-spack compiler find --scope site "${GCC_PREFIX}" 2>/dev/null \
-    || spack compiler find "${GCC_PREFIX}" || true
+# The bootstrap compiler is the base image's system gcc (e.g. gcc@8.5.0 on
+# AlmaLinux 8, glibc 2.28).  Capture it now: once our own toolchain is
+# self-hosted, nothing shipped may be built by it, so it gets un-registered.
+BOOTSTRAP_GCC="gcc@$(/usr/bin/gcc -dumpfullversion 2>/dev/null || /usr/bin/gcc -dumpversion 2>/dev/null)"
+say "bootstrap compiler: ${BOOTSTRAP_GCC}"
 
-# --- rung 2: GCC_SPEC builds GCC_TARGET_SPEC ---------------------------------
-say "installing ${GCC_TARGET_SPEC} ${GCC_TARGET_VARIANTS} languages=${GCC_LANGS} target=${TARGET} %${GCC_SPEC}"
+# --- rung 1: base gcc builds STAGE-1 of GCC_SPEC -----------------------------
+# Stage-1 is built BY the system gcc, so it -- and the gmp/mpfr/mpc/zlib it links
+# at RUNTIME -- carry gcc-runtime of the OLD system gcc.  That residue is exactly
+# what pollutes a reused closure (gcc-runtime@8.5.0), so stage-1 is a throwaway:
+# used only to build a clean stage-2, then uninstalled below.
+say "installing ${GCC_SPEC} (stage 1, built by ${BOOTSTRAP_GCC})"
+S1_PREFIX="$(install_rung ${GCC_SPEC} languages=${GCC_LANGS} target=${TARGET})"
+[ -n "${S1_PREFIX}" ] || die_rung "no prefix for stage-1 ${GCC_SPEC}"
+S1_HASH="$(hash_of "${S1_PREFIX}")"
+say "stage-1 ${GCC_SPEC} at ${S1_PREFIX} (/${S1_HASH})"
+spack compiler find --scope site "${S1_PREFIX}" 2>/dev/null \
+    || spack compiler find "${S1_PREFIX}" || true
+
+# From here every build must use OUR gcc, so its whole dependency closure
+# (gmp, mpfr, mpc, zlib, ...) is rebuilt with GCC_SPEC instead of reusing the
+# system-gcc copies stage-1 dragged in.  A hard `require` does that; it is added
+# only now (stage-1 itself needed the system gcc) and dropped once the toolchain
+# is built.  Verified: with it, the self-hosted gcc's closure is gcc-runtime of
+# GCC_SPEC alone -- zero system-gcc nodes.
+spack config --scope site add "packages:all:require:[\"%${GCC_SPEC}\"]" \
+    || die_rung "could not require %${GCC_SPEC}"
+
+# --- rung 2: STAGE-1 builds STAGE-2 of GCC_SPEC (self-hosted, clean) ----------
+# Built by stage-1 with every dependency forced onto GCC_SPEC, so its runtime
+# closure is gcc-runtime of GCC_SPEC alone.  This is the compiler the stack and
+# every env use, and it has no system-gcc residue.
+say "installing ${GCC_SPEC} (stage 2, self-hosted by stage-1)"
+GCC_PREFIX="$(install_rung ${GCC_SPEC} languages=${GCC_LANGS} target=${TARGET} %${GCC_SPEC})"
+[ -n "${GCC_PREFIX}" ] || die_rung "no prefix for stage-2 ${GCC_SPEC}"
+GCC_HASH="$(hash_of "${GCC_PREFIX}")"
+[ "${GCC_HASH}" != "${S1_HASH}" ] || die_rung "stage-2 ${GCC_SPEC} did not differ from stage-1"
+GCC_FULL="gcc@$("${GCC_PREFIX}/bin/gcc" -dumpfullversion 2>/dev/null || echo "${GCC_SPEC#gcc@}")"
+say "stage-2 ${GCC_SPEC} (${GCC_FULL}) at ${GCC_PREFIX} (/${GCC_HASH})"
+
+# --- rung 3: STAGE-1 builds GCC_TARGET_SPEC (clean via the require) -----------
+# Still built with the single (stage-1) %${GCC_SPEC} compiler -- registering
+# stage-2 now would make %${GCC_SPEC} match two gccs -- while the require keeps
+# its dependency closure free of system-gcc.
+say "installing ${GCC_TARGET_SPEC} ${GCC_TARGET_VARIANTS} %${GCC_SPEC}"
 TGCC_PREFIX="$(install_rung ${GCC_TARGET_SPEC} ${GCC_TARGET_VARIANTS} languages=${GCC_LANGS} target=${TARGET} %${GCC_SPEC})"
 [ -n "${TGCC_PREFIX}" ] || die_rung "no prefix for ${GCC_TARGET_SPEC}"
 say "spack ${GCC_TARGET_SPEC} (target compiler) at ${TGCC_PREFIX}"
 
+# The toolchain is built; drop the global require so later phases/envs may still
+# choose another compiler when they explicitly need one (e.g. a CUDA host gcc).
+spack config --scope site rm "packages:all:require" || true
+
+# --- seal the toolchain: stage-2 becomes the only GCC_SPEC, stage-1 is purged -
+# Swap the registered GCC_SPEC compiler from the polluted stage-1 to the clean
+# stage-2, register GCC_TARGET_SPEC, and un-register the system gcc so nothing
+# later silently builds with it.
+say "sealing toolchain: ${GCC_SPEC} stage-1 -> stage-2; dropping ${BOOTSTRAP_GCC}"
+spack compiler rm --scope site "${GCC_FULL}" 2>/dev/null \
+    || spack compiler rm --scope site "${GCC_SPEC}" || true   # remove stage-1 (sole entry)
+spack compiler find --scope site "${GCC_PREFIX}" 2>/dev/null \
+    || spack compiler find "${GCC_PREFIX}" || true            # register stage-2
 spack compiler find --scope site "${TGCC_PREFIX}" 2>/dev/null \
-    || spack compiler find "${TGCC_PREFIX}" || true
+    || spack compiler find "${TGCC_PREFIX}" || true           # register GCC_TARGET_SPEC
+spack compiler rm --scope site "${BOOTSTRAP_GCC}" || true     # drop system gcc
+
+# Uninstall stage-1 and garbage-collect the now-orphaned system-gcc build residue
+# (the gmp/mpfr/mpc/zlib/... it linked, and gcc-runtime of the system gcc).  The
+# store is then free of every system-gcc node, so even a reuse:true env cannot
+# pull one back in.
+say "purging stage-1 ${GCC_SPEC} (/${S1_HASH}) and its system-gcc residue"
+spack uninstall -y --force "/${S1_HASH}" \
+    || say "warning: could not uninstall stage-1 ${GCC_SPEC} (/${S1_HASH})"
+spack gc -y || say "note: spack gc removed nothing (or failed)"
+
+# Safety net for later builds: prefer GCC_SPEC so an auto-detected system gcc is
+# never chosen by default (the store now holds no system-gcc node to reuse, but
+# the base image's /usr/bin/gcc is still discoverable).
+spack config --scope site add "packages:all:prefer:[\"%${GCC_SPEC}\"]" || true
+
 spack compiler list || true
 
 # --- deployable env for the target compiler ----------------------------------
