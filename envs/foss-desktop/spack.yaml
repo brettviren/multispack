@@ -1,0 +1,46 @@
+# A small, self-contained FOSS desktop stack for exercising `makenv`.
+#
+# Four end-user applications -- the Emacs editor, the fish shell, the kitty
+# terminal and the herbstluftwm tiling window manager -- pulling a healthy but
+# not enormous dependency closure (freetype/harfbuzz/fontconfig, libpng, the
+# core X client libraries, ncurses, ...).  It gives a realistic multi-hundred-
+# node build without the DUNE/LArSoft weight and its long compile times.
+#
+# The Strategy B contract (target=x86_64_v3, glibc external, install-tree
+# padding/projections) comes from the SITE config that phase-bootstrap.sh
+# installs into $SPACK_ROOT/etc/spack; this manifest only names what to build.
+# Everything is built with %gcc@14 -- GCC_SPEC, the compiler multispack uses for
+# the stack, registered as a site compiler by the `compiler` phase -- so this env
+# can only be built after `mspack compiler` (or `multispack.sh compiler`) runs.
+#
+# Build it with:  ./multispack.sh makenv envs/foss-desktop/spack.yaml
+# Versions are left unpinned to take Spack's latest; pin them (e.g. emacs@30.1)
+# in a dated copy under a release directory when you want a reproducible cut.
+spack:
+  # herbstluftwm is not in Spack's builtin repo, so a small local recipe under
+  # ./recipes provides it (makenv copies recipes/ along with this manifest).
+  # builtin stays implicit and lowest-precedence, so the other three resolve
+  # from upstream.
+  repos:
+    foss_desktop: ./recipes/spack_repo/foss_desktop
+
+  specs:
+  # Spack's emacs recipe here is minimal (no build toggles) -- bare spec builds
+  # the latest (30.2), a terminal Emacs.
+  - emacs %gcc@14
+  - fish %gcc@14
+  - kitty %gcc@14
+  - herbstluftwm %gcc@14
+
+  concretizer:
+    # Reuse what the toolchain already put in the store (gcc-runtime, etc.);
+    # unify the four apps into one coherent set of shared dependencies.
+    unify: true
+    reuse: true
+
+  # A merged view so the apps land on one PATH (bin/emacs, bin/fish, bin/kitty,
+  # bin/herbstluftwm).  makenv deploys the env under /cvmfs/.../env/foss-desktop.
+  view:
+    default:
+      root: view
+      link: all

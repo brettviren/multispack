@@ -5,7 +5,10 @@ meta
 envs/*/spack.lock
 envs/*/.spack-env
 envs/*/recipes
-# Deployment exports (buildcache mirror, client bundle, conda channel)
-deploy/
+# ...but foss-desktop ships a first-party recipe (herbstluftwm), so track it.
+!envs/foss-desktop/recipes/
+# Deployment exports (buildcache mirror, client bundle, conda channel).
+# Anchored to the repo root so it does not also ignore mspack's deploy/ package.
+/deploy/
 # Local spaxi checkout used by conda-export (SPAXI_SRC); clone it here yourself
 python/
