@@ -12,9 +12,10 @@ from pathlib import Path
 
 import click
 
-from . import phases
+from . import deploy, phases
 from .config import Config
 from .container import ContainerError, Engine
+from .deploy.base import DeployRequest
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -104,6 +105,36 @@ def makenv(ctx, spack_yaml, image, name, repos, managed, nocheck):
     """Concretize + install an arbitrary Spack env (SPACK_YAML) into the store."""
     _run(phases.makenv, ctx.obj.cfg, ctx.obj.engine, spack_yaml,
          image=image, name=name, repos=repos, managed=managed, nocheck=nocheck)
+
+
+@cli.command("export-conda")
+@click.argument("dest", required=False)
+@click.option("--env", "env", default=None,
+              help="convert an env's roots+deps (default: everything installed).")
+@click.option("--spec", "specs", multiple=True,
+              help="convert these specs' closures (repeatable).")
+@click.option("-j", "--jobs", type=int, default=0, show_default=True,
+              help="spaxi conversion parallelism (0 = one per CPU).")
+@click.option("-i", "--image", default=None,
+              help="build image to run spaxi in (default: MAKENV_IMAGE).")
+@click.option("-l", "--log-sink", default=None,
+              help="forward spaxi --log-sink (stderr|stdout|container PATH).")
+@click.option("-L", "--log-level", default=None,
+              help="forward spaxi --log-level (debug|info|warning|error).")
+@click.pass_context
+def export_conda(ctx, dest, env, specs, jobs, image, log_sink, log_level):
+    """Convert installed Spack packages into a conda channel DEST (for pixi).
+
+    DEST is a local directory (default: DEPLOY_DIR).  With --env, converts that
+    env's roots and their runtime deps; with --spec, those specs' closures; with
+    neither, everything installed.
+    """
+    cfg = ctx.obj.cfg
+    dest = dest or cfg.get("DEPLOY_DIR")
+    req = DeployRequest(dest=dest, env=env, specs=list(specs), options={
+        "jobs": jobs, "image": image, "log_sink": log_sink,
+        "log_level": log_level})
+    _run(deploy.get("conda")().run, cfg, ctx.obj.engine, req)
 
 
 @cli.command("config")
