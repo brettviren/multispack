@@ -32,10 +32,12 @@ CONF="${MULTISPACK_CONF:-$HERE/multispack.conf}"
 : "${TARGET:=x86_64_v3}"
 : "${BUILDER_BASE:=docker.io/library/almalinux:8}"   # glibc 2.28 == manylinux_2_28
 
-# Toolchain built by Spack on top of the base image's system gcc.  This is the
-# intermediate rung of the bootstrap ladder (base gcc 8.5 -> GCC_SPEC) and the
-# compiler that builds the rest of the stack, including GCC_TARGET_SPEC.
-: "${GCC_SPEC:=gcc@14}"
+# The self-hosted BASE compiler: built 2-rung (system gcc -> stage-1 -> stage-2)
+# and purged of all system-gcc residue.  It is the stack's default compiler, and
+# GCC_TARGET_SPEC plus any `mspack compiler SPEC...` extras are built FROM it.
+# gcc@12 is a good base: it builds the gcc@12..15 range comfortably and is what
+# the LArSoft stack (largroups) needs.
+: "${GCC_SPEC:=gcc@12}"
 : "${GCC_LANGS:=c,c++,fortran}"
 
 # The portability payload.  The top rung of the ladder (GCC_SPEC -> GCC_TARGET_SPEC),

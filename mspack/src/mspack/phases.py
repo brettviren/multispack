@@ -70,12 +70,15 @@ def images(cfg: Config, engine: Engine, names: list[str] | None = None) -> None:
 
 
 def _in_builder(cfg: Config, engine: Engine, phase: str, description: str,
-                script: str) -> None:
+                script: str, extra_env: dict | None = None) -> None:
     """Run a bin/phase-*.sh inside the builder (== in_builder in the shell)."""
+    env = cfg.container_env()
+    if extra_env:
+        env.update(extra_env)
     with stage(cfg, phase, description, command=script) as h:
         engine.run(cfg.builder_img, [script],
                    mounts=cfg.volume_mounts(ro=False),
-                   env=cfg.container_env(), rm=True, interactive=True,
+                   env=env, rm=True, interactive=True,
                    log_path=h.log_path)
 
 
@@ -86,11 +89,17 @@ def bootstrap(cfg: Config, engine: Engine) -> None:
                 "/opt/multispack/bin/phase-bootstrap.sh")
 
 
-def compiler(cfg: Config, engine: Engine) -> None:
-    """Build the GCC ladder: GCC_SPEC then GCC_TARGET_SPEC (the payload)."""
-    _in_builder(cfg, engine, "compiler",
-                f"build {cfg['GCC_SPEC']} then {cfg['GCC_TARGET_SPEC']}",
-                "/opt/multispack/bin/phase-compiler.sh")
+def compiler(cfg: Config, engine: Engine, extra_specs=()) -> None:
+    """Build the self-hosted GCC_SPEC base + GCC_TARGET_SPEC, plus any extra
+    compiler specs (each built from the base; a spec older than the base is
+    best-effort with a warning)."""
+    extra = " ".join(extra_specs)
+    desc = f"build base {cfg['GCC_SPEC']} + {cfg['GCC_TARGET_SPEC']}"
+    if extra:
+        desc += f" + extras: {extra}"
+    _in_builder(cfg, engine, "compiler", desc,
+                "/opt/multispack/bin/phase-compiler.sh",
+                extra_env={"EXTRA_GCC_SPECS": extra})
 
 
 def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,

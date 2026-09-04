@@ -139,3 +139,12 @@ def test_makenv_missing_yaml(tmp_path):
         assert False, "expected FileNotFoundError"
     except FileNotFoundError:
         pass
+
+
+def test_compiler_passes_extra_specs(tmp_path):
+    cfg = _repo(tmp_path)
+    eng = Engine(dry_run=True)
+    phases.compiler(cfg, eng, ["gcc@14", "gcc@11"])
+    run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
+    assert "EXTRA_GCC_SPECS=gcc@14 gcc@11" in run
+    assert "GCC_SPEC=gcc@12" in run              # base moved to gcc@12

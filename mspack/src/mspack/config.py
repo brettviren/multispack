@@ -32,7 +32,7 @@ DEFAULTS: dict[str, str | None] = {
     "SPACK_PACKAGES_REF": "v1.2.2",
     "TARGET": "x86_64_v3",
     "BUILDER_BASE": "docker.io/library/almalinux:8",
-    "GCC_SPEC": "gcc@14",
+    "GCC_SPEC": "gcc@12",
     "GCC_LANGS": "c,c++,fortran",
     "GCC_TARGET_SPEC": "gcc@15",
     "GCC_TARGET_VARIANTS": "+binutils",

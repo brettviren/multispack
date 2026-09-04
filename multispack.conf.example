@@ -23,7 +23,7 @@
 # `multispack.sh compiler-validate` runs in every VALIDATORS distribution.
 # +binutils makes the target compiler ship its own as/ld so it is self-contained
 # in a bare container (drop it and compile-run degrades to a SKIP there).
-#GCC_SPEC=gcc@14
+#GCC_SPEC=gcc@12
 #GCC_LANGS=c,c++,fortran
 #GCC_TARGET_SPEC=gcc@15
 #GCC_TARGET_VARIANTS='+binutils'

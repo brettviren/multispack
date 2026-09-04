@@ -81,10 +81,15 @@ def bootstrap(ctx):
 
 
 @cli.command()
+@click.argument("specs", nargs=-1)
 @click.pass_context
-def compiler(ctx):
-    """Build the GCC ladder (GCC_SPEC then the GCC_TARGET_SPEC payload)."""
-    _run(phases.compiler, ctx.obj.cfg, ctx.obj.engine)
+def compiler(ctx, specs):
+    """Build the self-hosted GCC_SPEC base + payload, plus any extra SPECS.
+
+    Each extra SPEC (e.g. gcc@14) is built from the GCC_SPEC base; a spec older
+    than the base is built best-effort with a warning.
+    """
+    _run(phases.compiler, ctx.obj.cfg, ctx.obj.engine, list(specs))
 
 
 @cli.command()

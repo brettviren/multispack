@@ -8,13 +8,13 @@
 #
 # NOTE: the kitty terminal was dropped -- its GL stack drags in mesa -> llvm@22,
 # which balloons the closure and its compile time (and llvm failed to build on
-# this glibc-2.28 toolchain).  Add it back with `- kitty %gcc@14` if you want it
+# this glibc-2.28 toolchain).  Add it back with `- kitty %gcc@12` if you want it
 # and can spare the llvm build.
 #
 # The Strategy B contract (target=x86_64_v3, glibc external, install-tree
 # padding/projections) comes from the SITE config that phase-bootstrap.sh
 # installs into $SPACK_ROOT/etc/spack; this manifest only names what to build.
-# Everything is built with %gcc@14 -- GCC_SPEC, the compiler multispack uses for
+# Everything is built with %gcc@12 -- GCC_SPEC, the compiler multispack uses for
 # the stack, registered as a site compiler by the `compiler` phase -- so this env
 # can only be built after `mspack compiler` (or `multispack.sh compiler`) runs.
 #
@@ -22,14 +22,14 @@
 # Versions are left unpinned to take Spack's latest; pin them (e.g. emacs@30.1)
 # in a dated copy under a release directory when you want a reproducible cut.
 spack:
-  # Build the ENTIRE closure with gcc@14 (GCC_SPEC), not just the roots.  Without
+  # Build the ENTIRE closure with gcc@12 (GCC_SPEC), not just the roots.  Without
   # this, reuse picks up dependencies (e.g. zlib-ng) that the AlmaLinux-8 system
   # gcc@8.5.0 built during the compiler-bootstrap phase; those carry
   # gcc-runtime@8.5.0 (the old system libstdc++/libgcc), which both violates the
   # Strategy B "everything above libc is ours" contract and makes the conda
   # channel unsolvable (two gcc-runtime versions in one closure).
   #
-  # The enforcement is: %gcc@14 on each root spec + concretizer.compiler_mixing
+  # The enforcement is: %gcc@12 on each root spec + concretizer.compiler_mixing
   # false (which propagates that one compiler to every dependency) + reuse:false
   # (so a wrong-compiler node already in the store is rebuilt, not reused).
 
@@ -52,12 +52,12 @@ spack:
   specs:
   # Spack's emacs recipe here is minimal (no build toggles) -- bare spec builds
   # the latest (30.2), a terminal Emacs.
-  - emacs %gcc@14
-  - fish %gcc@14
-  - herbstluftwm %gcc@14
+  - emacs %gcc@12
+  - fish %gcc@12
+  - herbstluftwm %gcc@12
 
   concretizer:
-    compiler_mixing: false    # propagate each root's %gcc@14 to every dependency
+    compiler_mixing: false    # propagate each root's %gcc@12 to every dependency
     unify: true               # one coherent set of shared dependencies
     reuse: false              # rebuild wrong-compiler nodes; ground only recipes
 

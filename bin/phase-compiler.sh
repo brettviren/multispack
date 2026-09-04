@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# Build the Spack GCC bootstrap ladder, then register each rung.
+# Build the Spack GCC toolchain: a self-hosted base compiler, then everything
+# else built from it.
 #
-#   base image gcc 8.5  ->  GCC_SPEC (e.g. gcc@14)  ->  GCC_TARGET_SPEC (gcc@15)
+#   system gcc  ->  GCC_SPEC stage-1  ->  GCC_SPEC stage-2 (self-hosted BASE)
+#                                          |
+#                                          +-> GCC_TARGET_SPEC (payload)
+#                                          +-> EXTRA_GCC_SPECS... (requested)
 #
-# GCC_SPEC is the toolchain that builds the rest of the stack.  GCC_TARGET_SPEC
-# is the portability payload: it is built by GCC_SPEC and then proven to run in
-# every VALIDATORS distribution by `multispack.sh compiler-validate`.  From the
-# first rung on, nothing in the shipped tree was compiled by the distribution.
+# GCC_SPEC (e.g. gcc@12) is the 2-rung, self-hosted base: stage-1 is built by the
+# system gcc and thrown away; stage-2 is built by stage-1 with its whole
+# dependency closure forced onto GCC_SPEC, so it -- and everything built from it
+# -- carries only gcc-runtime of GCC_SPEC, never the system gcc's.  It is the
+# stack's default compiler.  GCC_TARGET_SPEC is the portability payload, proven
+# to run in every VALIDATORS distribution by `compiler-validate`.  EXTRA_GCC_SPECS
+# (from `mspack compiler SPEC...`) are additional compilers built from the base
+# for envs that pin them; a spec older than the base is built best-effort with a
+# warning.  From stage-2 on, nothing shipped was compiled by the distribution.
 . /opt/multispack/bin/common.sh
 use_spack
 
@@ -90,6 +99,30 @@ TGCC_PREFIX="$(install_rung ${GCC_TARGET_SPEC} ${GCC_TARGET_VARIANTS} languages=
 [ -n "${TGCC_PREFIX}" ] || die_rung "no prefix for ${GCC_TARGET_SPEC}"
 say "spack ${GCC_TARGET_SPEC} (target compiler) at ${TGCC_PREFIX}"
 
+# --- extra requested compilers (from `mspack compiler SPEC...`) --------------
+# Each is built FROM the GCC_SPEC base, still with the require active so its
+# dependency closure stays on GCC_SPEC (no system-gcc residue).  Built while only
+# stage-1 is registered so %${GCC_SPEC} is unambiguous.  A spec older than the
+# base is unlikely to compile with it -- warn and try anyway (best effort); any
+# failure is non-fatal (subshell + set -e) so the rest of the phase completes.
+EXTRA_PREFIXES=""
+BASE_MAJOR="$(echo "${GCC_SPEC#gcc@}" | cut -d. -f1)"
+for xspec in ${EXTRA_GCC_SPECS:-}; do
+    xmajor="$(echo "${xspec#gcc@}" | cut -d. -f1)"
+    if [ -n "$xmajor" ] && [ "$xmajor" -lt "$BASE_MAJOR" ] 2>/dev/null; then
+        say "warning: extra ${xspec} is older than the ${GCC_SPEC} base; building"
+        say "         it with ${GCC_SPEC} is best-effort and may fail"
+    fi
+    say "installing extra compiler ${xspec} %${GCC_SPEC}"
+    if xp="$(install_rung ${xspec} languages=${GCC_LANGS} target=${TARGET} %${GCC_SPEC})" \
+       && [ -n "$xp" ]; then
+        EXTRA_PREFIXES="${EXTRA_PREFIXES} ${xp}"
+        say "extra compiler ${xspec} at ${xp}"
+    else
+        say "warning: extra compiler ${xspec} failed to build (skipped)"
+    fi
+done
+
 # The toolchain is built; drop the global require so later phases/envs may still
 # choose another compiler when they explicitly need one (e.g. a CUDA host gcc).
 spack config --scope site rm "packages:all:require" || true
@@ -105,6 +138,10 @@ spack compiler find --scope site "${GCC_PREFIX}" 2>/dev/null \
     || spack compiler find "${GCC_PREFIX}" || true            # register stage-2
 spack compiler find --scope site "${TGCC_PREFIX}" 2>/dev/null \
     || spack compiler find "${TGCC_PREFIX}" || true           # register GCC_TARGET_SPEC
+for xp in ${EXTRA_PREFIXES}; do                                # register extras
+    spack compiler find --scope site "${xp}" 2>/dev/null \
+        || spack compiler find "${xp}" || true
+done
 spack compiler rm --scope site "${BOOTSTRAP_GCC}" || true     # drop system gcc
 
 # Uninstall stage-1 and garbage-collect the now-orphaned system-gcc build residue
@@ -116,10 +153,17 @@ spack uninstall -y --force "/${S1_HASH}" \
     || say "warning: could not uninstall stage-1 ${GCC_SPEC} (/${S1_HASH})"
 spack gc -y || say "note: spack gc removed nothing (or failed)"
 
-# Safety net for later builds: prefer GCC_SPEC so an auto-detected system gcc is
-# never chosen by default (the store now holds no system-gcc node to reuse, but
-# the base image's /usr/bin/gcc is still discoverable).
-spack config --scope site add "packages:all:prefer:[\"%${GCC_SPEC}\"]" || true
+# Safety net for later builds: prefer GCC_SPEC as the provider of each language
+# virtual, so an auto-detected system gcc is never chosen by default (the store
+# now holds no system-gcc node to reuse, but the base image's /usr/bin/gcc is
+# still discoverable).  Set it per-virtual (c/cxx/fortran) rather than as a bare
+# `packages:all:prefer:%gcc@14` -- Spack warns the latter is a blanket dependency
+# constraint that "can lead to unexpected concretizations" (e.g. fighting an env
+# that pins a different compiler like largroups' gcc@12).
+for _lang in c cxx fortran; do
+    spack config --scope site add "packages:${_lang}:prefer:[\"${GCC_SPEC}\"]" \
+        || say "warning: could not prefer ${GCC_SPEC} for language ${_lang}"
+done
 
 spack compiler list || true
 
