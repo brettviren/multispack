@@ -22,6 +22,17 @@
 # Versions are left unpinned to take Spack's latest; pin them (e.g. emacs@30.1)
 # in a dated copy under a release directory when you want a reproducible cut.
 spack:
+  # Build the ENTIRE closure with gcc@14 (GCC_SPEC), not just the roots.  Without
+  # this, reuse picks up dependencies (e.g. zlib-ng) that the AlmaLinux-8 system
+  # gcc@8.5.0 built during the compiler-bootstrap phase; those carry
+  # gcc-runtime@8.5.0 (the old system libstdc++/libgcc), which both violates the
+  # Strategy B "everything above libc is ours" contract and makes the conda
+  # channel unsolvable (two gcc-runtime versions in one closure).
+  #
+  # The enforcement is: %gcc@14 on each root spec + concretizer.compiler_mixing
+  # false (which propagates that one compiler to every dependency) + reuse:false
+  # (so a wrong-compiler node already in the store is rebuilt, not reused).
+
   # herbstluftwm is not in Spack's builtin repo, so a small local recipe under
   # ./recipes provides it (makenv copies recipes/ along with this manifest).
   # builtin stays implicit and lowest-precedence, so the other three resolve
@@ -37,10 +48,9 @@ spack:
   - herbstluftwm %gcc@14
 
   concretizer:
-    # Reuse what the toolchain already put in the store (gcc-runtime, etc.);
-    # unify the apps into one coherent set of shared dependencies.
-    unify: true
-    reuse: true
+    compiler_mixing: false    # propagate each root's %gcc@14 to every dependency
+    unify: true               # one coherent set of shared dependencies
+    reuse: false              # rebuild wrong-compiler nodes; ground only recipes
 
   # A merged view so the apps land on one PATH (bin/emacs, bin/fish,
   # bin/herbstluftwm).  makenv deploys the env under /cvmfs/.../env/foss-desktop.
