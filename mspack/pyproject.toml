@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Brookhaven Science Associates, LLC.
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "mspack"
+version = "0.1.0"
+description = "Structured orchestration for the multispack Strategy B Spack stack"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Brett Viren", email = "brett.viren@gmail.com" }]
+dependencies = [
+    "click>=8.1",
+    "ruamel.yaml>=0.17",
+]
+
+[project.scripts]
+mspack = "mspack.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
