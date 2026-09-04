@@ -40,6 +40,15 @@ spack:
   repos:
     foss_desktop: ./recipes/spack_repo/foss_desktop
 
+  packages:
+    fish:
+      # fish's 3.x recipe declares only depends_on("cxx"), never "c", so its
+      # CMake C-compiler probe fails ("[spack cc]: SPACK_CC_* variables not
+      # set").  Its unified solve happily falls back to that old recipe, so
+      # require >=4 (which correctly depends_on "c").  Note: fish 4.x is written
+      # in Rust, so this pulls a rust build into the closure.
+      require: '@4:'
+
   specs:
   # Spack's emacs recipe here is minimal (no build toggles) -- bare spec builds
   # the latest (30.2), a terminal Emacs.

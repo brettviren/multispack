@@ -25,6 +25,7 @@ class Herbstluftwm(CMakePackage):
     version("0.9.5", sha256="b2d4600909e5bece5ad63818dfb30bb19fd2ac9f52847b1a7a74ad4040718105")
     version("0.9.4", sha256="eef8eed076af33af2a75911c0fb1215fdb3427606a034ea8b44fe76872cb03cc")
 
+    depends_on("c", type="build")    # CMake probes a C compiler even for a C++ project
     depends_on("cxx", type="build")  # C++ sources
     depends_on("cmake@3.5:", type="build")
     depends_on("pkgconfig", type="build")
