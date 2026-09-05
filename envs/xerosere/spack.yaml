@@ -99,16 +99,15 @@ spack:
     - ninja
 
   packages:
-    hwloc:
-      # llvm's libomp probes libhwloc with check_library_exists(hwloc
-      # hwloc_topology_init); the symbol IS present, but libhwloc.so's DT_NEEDED
-      # on libpciaccess/libxml2 are not on that test link's path, so the link
-      # fails -> "LIBOMP: Hwloc requested but not available" and llvm's build dies.
-      # Drop those transitive libs so libhwloc.so links cleanly in the probe;
-      # thread-affinity (why libomp uses hwloc) needs neither PCI nor XML topology.
+    llvm:
+      # Build OpenMP as a project (with the host gcc) rather than as a runtime
+      # (with the just-built clang).  The runtimes path configures libomp under a
+      # freshly-built clang that cannot link the hwloc probe (check_library_exists
+      # reports hwloc_topology_init "not found" though it is present), so cmake
+      # errors "LIBOMP: Hwloc requested but not available" and the build dies.
+      # openmp=project runs that probe under gcc, which links libhwloc fine.
       require:
-      - '~pci'
-      - '~libxml2'
+      - 'openmp=project'
     # No global gcc@12 floor.  CUDA 12.x's nvcc refuses a gcc@15 host
     # (CudaPackage: conflicts %gcc@15: when %cuda@:12.9), so py-torch+cuda -- an
     # nvcc-compiled CudaPackage -- cannot build with gcc@15.  Rather than floor
