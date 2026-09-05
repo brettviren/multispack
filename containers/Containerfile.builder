@@ -28,6 +28,23 @@ RUN set -eux; \
     dnf clean all; rm -rf /var/cache/dnf
 RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python3 && python3 --version
 
+# GNU make >= 4.4 into /usr/local/bin (first on PATH), shadowing AlmaLinux 8's
+# make 4.2.1.  GCC 12+'s LTO (-flto=auto) makes lto-wrapper spawn `make` with a
+# named-pipe ("fifo:") jobserver; make 4.2.1 cannot parse it and dies with
+# "invalid --jobserver-auth string 'fifo:...'", breaking any package built with
+# LTO (py-matplotlib was the first to bite).  make is the one bootstrap tool the
+# compiler reaches for directly -- cmake and the rest come from Spack build deps
+# -- so modernizing it here fixes LTO for every package.  Built with the system
+# make; a source build keeps us off the distro's ancient version.
+ARG MAKE_VERSION=4.4.1
+RUN set -eux; cd /tmp; \
+    curl -fsSL "https://ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz" | tar xz; \
+    cd "make-${MAKE_VERSION}"; \
+    ./configure --prefix=/usr/local >/dev/null; \
+    make >/dev/null; make install >/dev/null; \
+    cd /; rm -rf "/tmp/make-${MAKE_VERSION}"; \
+    hash -r; make --version | head -1
+
 # Spack clones live on the /cvmfs volume and are owned by whoever runs the
 # container; do not let git refuse to operate on them.
 RUN git config --system --add safe.directory '*'
