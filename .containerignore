@@ -1,0 +1,16 @@
+# Build-context whitelist for `podman build` (== .dockerignore).
+#
+# Every image Containerfile (containers/Containerfile.*) COPYs only bin/,
+# config/, and tests/.  The build context, however, is the whole repo root, and
+# that root also holds tens of GB of local artifacts -- test-pixi/ (~26G),
+# deploy/ (~12G, gitignored), python/ (a spaxi checkout), meta/, etc.  Without
+# this file podman tars ALL of it before running the first step, spinning for
+# tens of minutes reading the context (no build output, no compilers, just a
+# pegged podman) -- which looks exactly like a hang.
+#
+# So exclude everything, then re-include only the three trees the images copy.
+# Keep this in sync with the COPY lines if a Containerfile ever needs more.
+*
+!bin
+!config
+!tests

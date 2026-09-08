@@ -106,8 +106,17 @@ spack:
       # reports hwloc_topology_init "not found" though it is present), so cmake
       # errors "LIBOMP: Hwloc requested but not available" and the build dies.
       # openmp=project runs that probe under gcc, which links libhwloc fine.
+      #
+      # ~libomptarget ~offload: llvm@19: defaults BOTH on (GPU OpenMP offloading),
+      # but the offloading libs are built in the runtimes/offload sub-build, which
+      # expects libomp.so from the PROJECT build -- a graph ninja doesn't connect
+      # under openmp=project, so it dies with "libomp.so ... needed by
+      # libomptarget.so ... missing and no known rule to make it".  Nothing in this
+      # stack needs OpenMP GPU offloading (llvm is pulled for clang/llvm libs, e.g.
+      # py-llvmlite); CPU libomp still builds via openmp=project.  +libomptarget
+      # requires +offload (@19:), so drop both together.
       require:
-      - 'openmp=project'
+      - 'openmp=project ~libomptarget ~offload'
     # No global gcc@12 floor.  CUDA 12.x's nvcc refuses a gcc@15 host
     # (CudaPackage: conflicts %gcc@15: when %cuda@:12.9), so py-torch+cuda -- an
     # nvcc-compiled CudaPackage -- cannot build with gcc@15.  Rather than floor

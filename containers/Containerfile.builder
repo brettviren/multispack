@@ -20,7 +20,7 @@ RUN set -eux; \
     dnf -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs install \
         gcc gcc-c++ gcc-gfortran \
         make patch file findutils diffutils which hostname procps-ng \
-        git curl tar gzip bzip2 xz zstd unzip \
+        git curl tar gzip bzip2 xz zstd libzstd-devel unzip \
         gawk sed grep \
         perl perl-Data-Dumper perl-Thread-Queue \
         binutils ca-certificates \
@@ -44,6 +44,30 @@ RUN set -eux; cd /tmp; \
     make >/dev/null; make install >/dev/null; \
     cd /; rm -rf "/tmp/make-${MAKE_VERSION}"; \
     hash -r; make --version | head -1
+
+# A modern, zstd-capable binutils >= 2.40 into /usr/local/bin (first on PATH),
+# shadowing AlmaLinux 8's binutils 2.30.  A modern GCC compresses libgcc.a's
+# .debug_info with zstd, but ld 2.30 predates zstd section support (added in
+# binutils 2.40) and dies with "unable to initialize decompress status for
+# section .debug_info ... File format not recognized" the moment a link pulls one
+# of those compressed libgcc objects (e.g. _muldi3.o / _divdi3.o for __int128).
+# Our own gcc uses its bundled binutils (via -B) so gcc links fine -- but a
+# freshly-built clang (llvm's runtimes phase links libc++ against gcc's libgcc.a)
+# resolves the bare `ld` from PATH, which is the distro's 2.30.  Shipping a
+# zstd-capable ld here fixes every PATH-resolved linker.  --with-zstd needs the
+# libzstd headers (installed above); the ldd check asserts zstd is actually wired
+# in, so a silently non-zstd build fails the image here rather than mid-stack.
+ARG BINUTILS_VERSION=2.43.1
+RUN set -eux; cd /tmp; \
+    curl -fsSL "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz" | tar xJ; \
+    cd "binutils-${BINUTILS_VERSION}"; \
+    ./configure --prefix=/usr/local --with-zstd --enable-64-bit-bfd \
+        --disable-nls --disable-werror >/dev/null; \
+    make MAKEINFO=true -j"$(nproc)" >/dev/null; \
+    make MAKEINFO=true install >/dev/null; \
+    cd /; rm -rf "/tmp/binutils-${BINUTILS_VERSION}"; \
+    hash -r; ld --version | head -1; \
+    ldd "$(command -v ld)" | grep -q libzstd || { echo "built ld lacks zstd support"; exit 1; }
 
 # Spack clones live on the /cvmfs volume and are owned by whoever runs the
 # container; do not let git refuse to operate on them.
