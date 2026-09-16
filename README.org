@@ -2,21 +2,26 @@
 
 * Introduction
 
-*multispack* uses Spack to build against a "floor" glibc version (2.28) so that the resulting binaries run on most current and future glibc/Linux distributions.  This basic idea is shared by [[https://github.com/pypa/manylinux][manylinux]] which is used to build the general Python ecosystem.
+*multispack* (=mspack= command) uses Spack to build against a "floor" glibc version so that the resulting binaries run on most current and future glibc/Linux distributions.  This basic idea is shared by [[https://github.com/pypa/manylinux][manylinux]] which is used to build the general Python ecosystem.
 
-* Additional optional features
+The choice of glibc version determines which Linux distros can run the resulting binaries.  =mspack survey= will give some indication of what implications a particular brings.  In 2026, glibc 2.28 (eg from Alma8) or 2.34 (eg from Alma9) are reasonable choices (see [[file:docs/base-glibc-floor.md]] for some issues for this choice).
+
+* Additional features
 
 - Build in podman containers for hermetic, reproducible builds and to provide a post-EOL build environment.
-- Factor large ecosystems into Spack Environment "groups" to keep concretization times reasonable.
-- Integrate [[https://github.com/brettviren/spaxi][spaxi]] to export the Spack-built binaries to Conda package channels that can be installed with [[https://pixi.prefix.dev/][pixi]].
+- Produce the build containers with a /bootstrap ladder/ that provides modern GCC and gcc-runtime independent from the initial host OS.
+- Factor large ecosystems into Spack Environment "groups" to keep Spack concretization times reasonable.
+- Optional use of [[https://github.com/brettviren/spaxi][spaxi]] to export the Spack-built binaries to Conda package channels that can be installed with [[https://pixi.prefix.dev/][pixi]].
 
 * Outline of a multispack build:
 
-1. Pick the "base glibc" version (2.28) and a distro that provides it (Alma 8).
+1. Pick the "base glibc" version and a distro that provides it.
 2. Define a minimal "base" container providing both including as host GCC.
 3. Perform a one-time "bootstrap ladder" to produce a "builder" container with Spack and Spack-built compilers and no OS-provided compilers.
 4. Use "builder" container as a base for all Spack builds.
 5. Deploy the binaries in interesting ways.
+
+The base distro is selectable.  =mspack survey= reports the glibc/gcc each popular distro (Debian, Alma/RHEL/Rocky, Ubuntu, SLES/openSUSE, Fedora) natively provides and, for a given glibc floor, which distros the resulting binaries run on; the catalog lives in [[file:config/distros.yaml][=config/distros.yaml=]].  Set =BASE_DISTRO= (in =multispack.conf= or =mspack --base-distro=) to a key from =mspack survey table= to start the bootstrap ladder from either an rpm/dnf base (Alma, default) or a deb/apt base (Debian/Ubuntu).
 
 * Deploying binaries
 
@@ -40,3 +45,6 @@ Supported deployments:
 
 multispack is in a phase of super fast development.  Current drive is to consolidate the proof of principle into a well-integrated Python package (=mspack=).  This will then be the basis for how to extend to support long-horizon life-cycle of software ecosystem version and build management.
 
+* Other strategies
+
+Multispack began with a "Strategy A" but settled on the simpler "Strategy B" which may be referenced in other docs.  See [[file:docs/strategies.md]] for a description of "A" and a list of pros/cons with the chosen "B".

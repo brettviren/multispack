@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 
 from . import deploy, phases
+from . import survey as survey_mod
 from .config import Config
 from .container import ContainerError, Engine
 from .deploy.base import DeployRequest
@@ -23,9 +24,11 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 class App:
     """Shared state: resolved Config plus a ready Engine."""
 
-    def __init__(self, root, conf, engine, dry_run):
+    def __init__(self, root, conf, engine, dry_run, base_distro=None):
+        overrides = {"BASE_DISTRO": base_distro} if base_distro else None
         self.cfg = Config.load(root=Path(root) if root else None,
-                               conf=Path(conf) if conf else None)
+                               conf=Path(conf) if conf else None,
+                               overrides=overrides)
         eng = engine or self.cfg.engine
         self.engine = Engine(engine=eng, dry_run=dry_run)
 
@@ -38,12 +41,16 @@ class App:
               help="Path to multispack.conf (default: <root>/multispack.conf).")
 @click.option("--engine", default=None,
               help="Container engine override (default: config ENGINE).")
+@click.option("--base-distro", default=None,
+              help="Base distro key from config/distros.yaml (sets the glibc "
+                   "floor + builder); default: config BASE_DISTRO. See "
+                   "`mspack survey table`.")
 @click.option("--dry-run", is_flag=True,
               help="Print the container commands that would run; execute none.")
 @click.pass_context
-def cli(ctx, root, conf, engine, dry_run):
+def cli(ctx, root, conf, engine, base_distro, dry_run):
     """mspack: build and deploy the multispack Strategy B Spack stack."""
-    ctx.obj = App(root, conf, engine, dry_run)
+    ctx.obj = App(root, conf, engine, dry_run, base_distro=base_distro)
 
 
 def _fail(msg: str):
@@ -140,6 +147,46 @@ def export_conda(ctx, dest, env, specs, jobs, image, log_sink, log_level):
         "jobs": jobs, "image": image, "log_sink": log_sink,
         "log_level": log_level})
     _run(deploy.get("conda")().run, cfg, ctx.obj.engine, req)
+
+
+@cli.group(invoke_without_command=True)
+@click.option("--json", "as_json", is_flag=True, help="emit JSON, not text.")
+@click.pass_context
+def survey(ctx, as_json):
+    """Survey Linux distros: glibc/gcc coverage from config/distros.yaml.
+
+    With no subcommand, prints the glibc-coverage report (which distro releases
+    a stack built on each glibc floor can run on).
+    """
+    if ctx.invoked_subcommand is None:
+        catalog = survey_mod.load_catalog(ctx.obj.cfg.root)
+        click.echo(survey_mod.report(catalog, as_json=as_json))
+
+
+@survey.command("table")
+@click.option("--json", "as_json", is_flag=True, help="emit JSON, not text.")
+@click.pass_context
+def survey_table(ctx, as_json):
+    """Print the raw distro catalog (glibc, default gcc, image, EOL, ...)."""
+    catalog = survey_mod.load_catalog(ctx.obj.cfg.root)
+    click.echo(survey_mod.table(catalog, as_json=as_json))
+
+
+@survey.command("probe")
+@click.argument("names", nargs=-1)
+@click.pass_context
+def survey_probe(ctx, names):
+    """Refresh glibc/gcc by pulling each distro image and reading it.
+
+    NAMES limits the probe to those catalog keys (default: all).  Rewrites the
+    probed fields into config/distros.yaml, preserving its comments.
+    """
+    def _do():
+        results = survey_mod.probe(ctx.obj.cfg.root, ctx.obj.engine,
+                                   list(names) or None)
+        for r in results:
+            click.echo(f"  {r['key']:<12} {r.get('status', '')}")
+    _run(_do)
 
 
 @cli.command("config")

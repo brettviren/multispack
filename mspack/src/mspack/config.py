@@ -19,6 +19,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .survey import load_catalog
+
+# Used only when no catalog is available (e.g. a bare test root without
+# config/distros.yaml) and no explicit BUILDER_BASE was given.
+_FALLBACK_BUILDER_BASE = "docker.io/library/almalinux:8"
+
 # name -> default, in the order multispack.sh defines them.  Defaults that are
 # derived from other values (CVMFS_ROOT, DEPLOY_DIR, ...) are computed in
 # Config.load after the flat layer merge, so they are None here.
@@ -31,7 +37,12 @@ DEFAULTS: dict[str, str | None] = {
     "SPACK_PACKAGES_GIT": "https://github.com/spack/spack-packages.git",
     "SPACK_PACKAGES_REF": "v1.2.2",
     "TARGET": "x86_64_v3",
-    "BUILDER_BASE": "docker.io/library/almalinux:8",
+    # BASE_DISTRO names a key in config/distros.yaml; it derives BUILDER_BASE
+    # (the base image, hence the glibc floor) and the package manager that
+    # selects the builder Containerfile.  BUILDER_BASE is None here because it is
+    # DERIVED from BASE_DISTRO unless set explicitly (the pin-by-digest path).
+    "BASE_DISTRO": "alma8",
+    "BUILDER_BASE": None,                     # derived from BASE_DISTRO's image
     "GCC_SPEC": "gcc@12",
     "GCC_LANGS": "c,c++,fortran",
     "GCC_TARGET_SPEC": "gcc@15",
@@ -112,6 +123,7 @@ class Config:
 
     root: Path
     values: dict[str, str] = field(default_factory=dict)
+    distro: dict = field(default_factory=dict)   # resolved BASE_DISTRO catalog entry
 
     # -- construction -------------------------------------------------------
     @classmethod
@@ -131,6 +143,25 @@ class Config:
         if overrides:
             vals.update({k: v for k, v in overrides.items() if k in DEFAULTS})
 
+        # Base distro -> builder base image.  BASE_DISTRO keys into the survey
+        # catalog (config/distros.yaml) for the image and package manager.  An
+        # explicit BUILDER_BASE (conf/env/override) always wins so the
+        # pin-by-digest workflow keeps working; otherwise it is the distro's
+        # image.  A named-but-unknown BASE_DISTRO with a real catalog is a hard
+        # error; with no catalog (bare test roots) we fall back to AlmaLinux 8.
+        catalog = load_catalog(root)
+        entry = catalog.get(vals.get("BASE_DISTRO", "")) or {}
+        if not vals.get("BUILDER_BASE"):
+            if entry.get("image"):
+                vals["BUILDER_BASE"] = entry["image"]
+            elif catalog and vals.get("BASE_DISTRO"):
+                raise ValueError(
+                    f"BASE_DISTRO '{vals['BASE_DISTRO']}' is not in "
+                    f"{root}/config/distros.yaml; pick a known distro "
+                    f"(mspack survey table) or set BUILDER_BASE explicitly")
+            else:
+                vals["BUILDER_BASE"] = _FALLBACK_BUILDER_BASE
+
         # Derived defaults (only when not explicitly set by conf/env/override).
         if not vals.get("CVMFS_ROOT"):
             vals["CVMFS_ROOT"] = f"/cvmfs/{vals['CVMFS_HOST']}"
@@ -138,7 +169,7 @@ class Config:
             vals["DEPLOY_DIR"] = str(root / "deploy")
         if not vals.get("SPAXI_SRC"):
             vals["SPAXI_SRC"] = str(root / "python" / "spaxi")
-        return cls(root=root, values=vals)
+        return cls(root=root, values=vals, distro=entry)
 
     # -- typed accessors ----------------------------------------------------
     def __getitem__(self, key: str) -> str:
@@ -165,6 +196,37 @@ class Config:
 
     def image(self, name: str) -> str:
         return f"{self.values['IMG_PREFIX']}/{name}:{self.values['IMG_TAG']}"
+
+    # -- base distro (from the survey catalog) ------------------------------
+    @property
+    def base_distro(self) -> str:
+        return self.values.get("BASE_DISTRO", "")
+
+    @property
+    def distro_family(self) -> str:
+        """Package format of the base distro: 'rpm' or 'deb' (default rpm)."""
+        return self.distro.get("family", "rpm")
+
+    @property
+    def pkg_manager(self) -> str:
+        """Package manager of the base distro: 'dnf', 'apt', ... (default dnf)."""
+        return self.distro.get("pkg_manager", "dnf")
+
+    def builder_containerfile(self) -> Path:
+        """The builder Containerfile for the base distro's package manager.
+
+        Only dnf (Containerfile.builder) and apt (Containerfile.builder-debian)
+        bases have a builder today; anything else (e.g. zypper) is surveyed but
+        not yet bootstrappable and raises a clear error.
+        """
+        name = {"dnf": "builder", "apt": "builder-debian"}.get(self.pkg_manager)
+        if name is None:
+            raise ValueError(
+                f"no builder Containerfile for base distro "
+                f"'{self.base_distro}' (pkg_manager={self.pkg_manager}); only "
+                f"dnf/apt bases are supported -- pick an rpm/dnf or deb/apt "
+                f"distro (mspack survey table) or provide a custom builder")
+        return self.root / "containers" / f"Containerfile.{name}"
 
     @property
     def jobs(self) -> int:

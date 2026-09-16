@@ -1,0 +1,322 @@
+# Linux distribution survey catalog for multispack.
+#
+# WHAT THIS IS
+#   For each distribution release we record the glibc and the DEFAULT gcc it
+#   natively provides from its base repositories, plus its official container
+#   image, package family/manager, release and end-of-life dates.  `mspack
+#   survey` collates this into "for a given glibc floor, which distros can run
+#   the resulting binaries" (a binary built against glibc X runs on any distro
+#   whose glibc >= X -- glibc keeps forward compatibility via symbol versioning).
+#
+# HOW IT IS USED
+#   1. `mspack survey`         -- the glibc-coverage report (default).
+#   2. `mspack survey table`   -- this catalog as a table.
+#   3. `mspack survey probe`   -- MECHANICALLY refresh glibc/gcc by pulling each
+#                                 `image` and reading it (getconf/ldd + the pkg
+#                                 manager); rewrites the probed fields in place.
+#   4. base-distro resolution  -- `BASE_DISTRO=<key>` (config/CLI) resolves
+#                                 `image` (-> BUILDER_BASE) and `pkg_manager`
+#                                 (-> which builder Containerfile) from here.
+#
+# HOW TO REFRESH
+#   - Mechanical (glibc + best-effort gcc):  mspack survey probe [KEY...]
+#   - Editorial (release/eol dates, adding new releases, notes): re-run the LLM
+#     web-search analysis that seeded this file and edit below.  Keep entries
+#     terse and cite the moving facts in `notes`.
+#
+# FIELDS
+#   distro       human name         family       package format: rpm | deb
+#   release      version string     pkg_manager  dnf | apt | zypper
+#   glibc        e.g. "2.28"        image        official container image ref
+#   gcc          DEFAULT base gcc   released/eol  YYYY-MM (best available)
+#
+# BOOTSTRAP BASES
+#   A distro can seed the bootstrap ladder only if a builder Containerfile exists
+#   for its pkg_manager: dnf -> Containerfile.builder, apt ->
+#   Containerfile.builder-debian.  zypper (SLES/openSUSE) is surveyed but not yet
+#   a supported base (no builder); pick an rpm/dnf or deb/apt distro, or set
+#   BUILDER_BASE explicitly.
+#
+schema: 1
+updated: 2026-09+probe
+method: llm-web-search+probe
+
+distros:
+
+  # --- Enterprise Linux (RHEL and rebuilds): dnf/rpm ------------------------
+  alma8:
+    distro: AlmaLinux
+    release: '8'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/almalinux:8
+    glibc: '2.28'
+    gcc: 8.5.0
+    released: 2021-03
+    eol: 2029-05
+    notes: manylinux_2_28 baseline (RHEL8 ABI); default gcc 8.5.0; 
+      gcc-toolset-14 available
+  alma9:
+    distro: AlmaLinux
+    release: '9'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/almalinux:9
+    glibc: '2.34'
+    gcc: '11.5'
+    released: 2022-05
+    eol: 2032-05
+    notes: manylinux_2_34 baseline; default gcc 11 (now 11.5); gcc-toolset-14 
+      available
+  alma10:
+    distro: AlmaLinux
+    release: '10'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/almalinux:10
+    glibc: '2.39'
+    gcc: '14.2'
+    released: 2025-05
+    eol: 2035-05
+    notes: RHEL10 rebuild; raises microarch baseline to x86_64-v3; 
+      gcc-toolset-15 available
+  rocky8:
+    distro: Rocky Linux
+    release: '8'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/rockylinux:8
+    glibc: '2.28'
+    gcc: '8.5'
+    released: 2021-06
+    eol: 2029-05
+    notes: RHEL8 rebuild, manylinux_2_28-compatible; 
+      docker.io/library/rockylinux deprecated for rockylinux/rockylinux
+  rocky9:
+    distro: Rocky Linux
+    release: '9'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/rockylinux:9
+    glibc: '2.34'
+    gcc: '11.5'
+    released: 2022-07
+    eol: 2032-05
+    notes: RHEL9 rebuild; default gcc 11 (now 11.5)
+  rhel8:
+    distro: RHEL
+    release: '8'
+    family: rpm
+    pkg_manager: dnf
+    image: registry.access.redhat.com/ubi8/ubi
+    glibc: '2.28'
+    gcc: '8.5'
+    released: 2019-05
+    eol: 2029-05
+    notes: full support ended 2024-05, maintenance to 2029-05; UBI image
+  rhel9:
+    distro: RHEL
+    release: '9'
+    family: rpm
+    pkg_manager: dnf
+    image: registry.access.redhat.com/ubi9/ubi
+    glibc: '2.34'
+    gcc: '11.5'
+    released: 2022-05
+    eol: 2032-05
+    notes: full support to 2027-05; default gcc 11 (now 11.5); UBI image
+  rhel10:
+    distro: RHEL
+    release: '10'
+    family: rpm
+    pkg_manager: dnf
+    image: registry.access.redhat.com/ubi10/ubi
+    glibc: '2.39'
+    gcc: '14.2'
+    released: 2025-05
+    eol: 2035-05
+    notes: full support to 2030-05; gcc 14.2, binutils 2.41; x86_64-v3 baseline;
+      UBI image
+
+  # --- Fedora: dnf/rpm (fast-moving, short EOL) -----------------------------
+  fedora40:
+    distro: Fedora
+    release: '40'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/fedora:40
+    glibc: '2.39'
+    gcc: '14'
+    released: 2024-04
+    eol: 2025-05
+    notes: EOL 2025-05-13 (past); gcc 14, binutils 2.41
+  fedora41:
+    distro: Fedora
+    release: '41'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/fedora:41
+    glibc: '2.40'
+    gcc: '14'
+    released: 2024-10
+    eol: 2025-11
+    notes: gcc 14, binutils 2.42, glibc 2.40
+  fedora42:
+    distro: Fedora
+    release: '42'
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/fedora:42
+    glibc: '2.41'
+    gcc: '15'
+    released: 2025-04
+    eol: 2026-05
+    notes: gcc 15, binutils 2.44, glibc 2.41; EOL ~2026-05 (approx)
+
+  # --- Debian: apt/deb ------------------------------------------------------
+  debian11:
+    distro: Debian
+    release: '11'
+    codename: bullseye
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/debian:11
+    glibc: '2.31'
+    gcc: '10'
+    released: 2021-08
+    eol: 2024-08
+    notes: past standard support (LTS to 2026-08, ELTS to 2031-06); default gcc 
+      10
+  debian12:
+    distro: Debian
+    release: '12'
+    codename: bookworm
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/debian:12
+    glibc: '2.36'
+    gcc: '12'
+    released: 2023-06
+    eol: 2026-07
+    notes: oldstable; security to 2026-07, LTS to 2028-06; default gcc 12
+  debian13:
+    distro: Debian
+    release: '13'
+    codename: trixie
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/debian:13
+    glibc: '2.41'
+    gcc: '14'
+    released: 2025-08
+    eol: 2028-08
+    notes: current stable; LTS to 2030-06; default gcc 14
+
+  # --- Ubuntu: apt/deb (LTS releases) ---------------------------------------
+  ubuntu2004:
+    distro: Ubuntu
+    release: '20.04'
+    codename: focal
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/ubuntu:20.04
+    glibc: '2.31'
+    gcc: '9'
+    released: 2020-04
+    eol: 2025-04
+    notes: LTS; standard support ended 2025-04, ESM to 2030-04; default gcc 9
+  ubuntu2204:
+    distro: Ubuntu
+    release: '22.04'
+    codename: jammy
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/ubuntu:22.04
+    glibc: '2.35'
+    gcc: '11'
+    released: 2022-04
+    eol: 2027-04
+    notes: LTS; ESM to 2032-04; default gcc 11
+  ubuntu2404:
+    distro: Ubuntu
+    release: '24.04'
+    codename: noble
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/ubuntu:24.04
+    glibc: '2.39'
+    gcc: '13'
+    released: 2024-04
+    eol: 2029-04
+    notes: LTS; ESM to 2034-04; default gcc 13
+
+  # --- SUSE: zypper/rpm (surveyed; not yet a bootstrap base) ----------------
+  sles15sp5:
+    distro: SLES
+    release: 15-SP5
+    family: rpm
+    pkg_manager: zypper
+    image: registry.suse.com/bci/bci-base:15.5
+    glibc: '2.31'
+    gcc: '7.5'
+    released: 2023-06
+    eol: 2024-12
+    notes: DOE HPC facility proxy; system gcc fixed at 7.5 across SLE15; gcc13 
+      pkg available
+  sles15sp6:
+    distro: SLES
+    release: 15-SP6
+    family: rpm
+    pkg_manager: zypper
+    image: registry.suse.com/bci/bci-base:15.6
+    glibc: '2.38'
+    gcc: '7.5'
+    released: 2024-06
+    eol: 2025-12
+    notes: DOE HPC facility proxy; glibc 2.38; system gcc 7.5; gcc14 pkg 
+      available
+  sles15sp7:
+    distro: SLES
+    release: 15-SP7
+    family: rpm
+    pkg_manager: zypper
+    image: registry.suse.com/bci/bci-base:15.7
+    glibc: '2.38'
+    gcc: '7.5'
+    released: 2025-06
+    eol: 2031-07
+    notes: final SP of SLE15; general support to 2031-07, LTSS to 2037; gcc15 
+      pkg available
+  leap155:
+    distro: openSUSE Leap
+    release: '15.5'
+    family: rpm
+    pkg_manager: zypper
+    image: docker.io/opensuse/leap:15.5
+    glibc: '2.31'
+    gcc: '7.5'
+    released: 2023-06
+    eol: 2024-12
+    notes: binary-compatible with SLES 15 SP5; system gcc 7.5
+  leap156:
+    distro: openSUSE Leap
+    release: '15.6'
+    family: rpm
+    pkg_manager: zypper
+    image: docker.io/opensuse/leap:15.6
+    glibc: '2.38'
+    gcc: '7.5'
+    released: 2024-06
+    eol: 2026-04
+    notes: binary-compatible with SLES 15 SP6; system gcc 7.5
+  tumbleweed:
+    distro: openSUSE Tumbleweed
+    release: rolling
+    family: rpm
+    pkg_manager: zypper
+    image: docker.io/opensuse/tumbleweed
+    glibc: '2.42'
+    gcc: '15'
+    released: rolling
+    eol: rolling
+    notes: rolling; glibc/gcc drift each snapshot (approx late-2025/2026 values)

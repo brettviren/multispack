@@ -1,0 +1,97 @@
+# multispack builder (Debian/apt) -- the captured build environment for
+# Strategy B when BASE_DISTRO is a deb/apt distro.
+#
+# This is the exact analogue of Containerfile.builder (AlmaLinux/dnf): identical
+# ABOVE libc, so the resulting stacks differ only in their glibc FLOOR.  The base
+# image's glibc IS the portability contract of the output -- Debian 12 bookworm
+# ships glibc 2.36 (vs AlmaLinux 8's 2.28), so binaries built here require a host
+# glibc >= 2.36.  Prefer the alma8 base for the widest reach; use this when you
+# specifically want a deb-family base or a newer floor.
+#
+# PIN THIS BY DIGEST for a reproducible rebuild, e.g.
+#   BUILDER_BASE=docker.io/library/debian@sha256:...
+# and record the digest in multispack.conf.
+ARG BUILDER_BASE=docker.io/library/debian:12
+FROM ${BUILDER_BASE}
+
+LABEL org.opencontainers.image.title="multispack builder (debian)" \
+      org.opencontainers.image.description="Strategy B portable Spack build environment (deb-family base)"
+
+# Only what Spack itself needs to run and to bootstrap its first compiler.
+# Deliberately minimal: everything above libc is built by Spack, so the
+# distribution contributes nothing to the shipped artifacts.  gcc/g++ pull in
+# binutils and libc6-dev as dependencies (needed by the source builds below).
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        gcc g++ gfortran libc6-dev \
+        make patch file findutils diffutils debianutils procps hostname \
+        git curl ca-certificates tar gzip bzip2 xz-utils zstd libzstd-dev unzip \
+        gawk sed grep \
+        perl \
+        python3 python3-setuptools ; \
+    rm -rf /var/lib/apt/lists/*
+RUN python3 --version
+
+# GNU make >= 4.4 into /usr/local/bin (first on PATH), shadowing the distro make.
+# GCC 12+'s LTO (-flto=auto) makes lto-wrapper spawn `make` with a named-pipe
+# ("fifo:") jobserver; make < 4.4 cannot parse it and dies with "invalid
+# --jobserver-auth string 'fifo:...'", breaking any package built with LTO
+# (py-matplotlib was the first to bite).  make is the one bootstrap tool the
+# compiler reaches for directly -- cmake and the rest come from Spack build deps
+# -- so modernizing it here fixes LTO for every package.  Built with the system
+# make; a source build keeps us off the distro's version regardless of release.
+ARG MAKE_VERSION=4.4.1
+RUN set -eux; cd /tmp; \
+    curl -fsSL "https://ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz" | tar xz; \
+    cd "make-${MAKE_VERSION}"; \
+    ./configure --prefix=/usr/local >/dev/null; \
+    make >/dev/null; make install >/dev/null; \
+    cd /; rm -rf "/tmp/make-${MAKE_VERSION}"; \
+    hash -r; make --version | head -1
+
+# A modern, zstd-capable binutils >= 2.40 into /usr/local/bin (first on PATH),
+# shadowing the distro binutils.  A modern GCC compresses libgcc.a's .debug_info
+# with zstd, but ld < 2.40 predates zstd section support and dies with "unable to
+# initialize decompress status for section .debug_info ... File format not
+# recognized" the moment a link pulls one of those compressed libgcc objects
+# (e.g. _muldi3.o / _divdi3.o for __int128).  Our own gcc uses its bundled
+# binutils (via -B) so gcc links fine -- but a freshly-built clang (llvm's
+# runtimes phase links libc++ against gcc's libgcc.a) resolves the bare `ld` from
+# PATH.  Shipping a zstd-capable ld here fixes every PATH-resolved linker.  Built
+# identically to the AlmaLinux builder so behaviour matches across bases;
+# --with-zstd needs libzstd headers (installed above) and the ldd check asserts
+# zstd is actually wired in, so a silently non-zstd build fails the image here.
+ARG BINUTILS_VERSION=2.43.1
+RUN set -eux; cd /tmp; \
+    curl -fsSL "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz" | tar xJ; \
+    cd "binutils-${BINUTILS_VERSION}"; \
+    ./configure --prefix=/usr/local --with-zstd --enable-64-bit-bfd \
+        --disable-nls --disable-werror >/dev/null; \
+    make MAKEINFO=true -j"$(nproc)" >/dev/null; \
+    make MAKEINFO=true install >/dev/null; \
+    cd /; rm -rf "/tmp/binutils-${BINUTILS_VERSION}"; \
+    hash -r; ld --version | head -1; \
+    ldd "$(command -v ld)" | grep -q libzstd || { echo "built ld lacks zstd support"; exit 1; }
+
+# Spack clones live on the /cvmfs volume and are owned by whoever runs the
+# container; do not let git refuse to operate on them.
+RUN git config --system --add safe.directory '*'
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    SPACK_DISABLE_LOCAL_CONFIG=1 \
+    SPACK_USER_CACHE_PATH=/multispack/work/spack-user-cache \
+    TMPDIR=/multispack/work/tmp
+
+# Baked-in recipe.  multispack.sh / mspack bind-mounts the host copies over these
+# when DEV_MOUNTS=1 so scripts can be edited without rebuilding the image.
+COPY bin    /opt/multispack/bin
+COPY config /opt/multispack/config
+COPY tests  /opt/multispack/tests
+RUN chmod +x /opt/multispack/bin/*.sh /opt/multispack/bin/*.py || true
+
+WORKDIR /multispack
+CMD ["/bin/bash", "-l"]

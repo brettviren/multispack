@@ -51,7 +51,13 @@ def images(cfg: Config, engine: Engine, names: list[str] | None = None) -> None:
     want = names or (["builder"] + cfg.validators + cfg.devel_validators)
     with stage(cfg, "images", f"build images: {' '.join(want)}") as h:
         for name in want:
-            cf = cfg.root / "containers" / f"Containerfile.{name}"
+            # The builder is the one image whose Containerfile depends on the
+            # base distro's package manager (dnf vs apt); everything else is a
+            # fixed Containerfile.<name>.  The tag stays 'builder' either way.
+            if name == "builder":
+                cf = cfg.builder_containerfile()
+            else:
+                cf = cfg.root / "containers" / f"Containerfile.{name}"
             if not cf.is_file():
                 raise FileNotFoundError(f"no such Containerfile: {cf}")
             img = cfg.image(name)

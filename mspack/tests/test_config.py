@@ -29,6 +29,77 @@ def _root(tmp_path):
     return tmp_path
 
 
+_CATALOG_YAML = """schema: 1
+distros:
+  alma8:
+    distro: AlmaLinux
+    release: "8"
+    glibc: "2.28"
+    family: rpm
+    pkg_manager: dnf
+    image: docker.io/library/almalinux:8
+  debian12:
+    distro: Debian
+    release: "12"
+    glibc: "2.36"
+    family: deb
+    pkg_manager: apt
+    image: docker.io/library/debian:12
+"""
+
+
+def _root_with_catalog(tmp_path):
+    root = _root(tmp_path)
+    (root / "config").mkdir()
+    (root / "config" / "distros.yaml").write_text(_CATALOG_YAML)
+    return root
+
+
+def test_base_distro_default_resolves_alma8(tmp_path):
+    root = _root_with_catalog(tmp_path)
+    cfg = Config.load(root=root, conf=tmp_path / "none.conf")
+    assert cfg.base_distro == "alma8"
+    assert cfg["BUILDER_BASE"] == "docker.io/library/almalinux:8"
+    assert cfg.distro_family == "rpm"
+    assert cfg.pkg_manager == "dnf"
+    assert cfg.builder_containerfile().name == "Containerfile.builder"
+
+
+def test_base_distro_debian_selects_deb_builder(tmp_path):
+    root = _root_with_catalog(tmp_path)
+    cfg = Config.load(root=root, conf=tmp_path / "none.conf",
+                      overrides={"BASE_DISTRO": "debian12"})
+    assert cfg["BUILDER_BASE"] == "docker.io/library/debian:12"
+    assert cfg.distro_family == "deb"
+    assert cfg.pkg_manager == "apt"
+    assert cfg.builder_containerfile().name == "Containerfile.builder-debian"
+
+
+def test_explicit_builder_base_overrides_distro(tmp_path):
+    root = _root_with_catalog(tmp_path)
+    cfg = Config.load(root=root, conf=tmp_path / "none.conf",
+                      overrides={"BASE_DISTRO": "debian12",
+                                 "BUILDER_BASE": "docker.io/library/debian@sha256:abc"})
+    assert cfg["BUILDER_BASE"] == "docker.io/library/debian@sha256:abc"
+    # family/pkg-manager still come from the named distro
+    assert cfg.pkg_manager == "apt"
+
+
+def test_unknown_base_distro_with_catalog_errors(tmp_path):
+    import pytest
+    root = _root_with_catalog(tmp_path)
+    with pytest.raises(ValueError):
+        Config.load(root=root, conf=tmp_path / "none.conf",
+                    overrides={"BASE_DISTRO": "nosuch"})
+
+
+def test_no_catalog_falls_back_to_alma8(tmp_path):
+    # _root has no config/distros.yaml -> fallback image, dnf builder.
+    cfg = Config.load(root=_root(tmp_path), conf=tmp_path / "none.conf")
+    assert cfg["BUILDER_BASE"] == "docker.io/library/almalinux:8"
+    assert cfg.builder_containerfile().name == "Containerfile.builder"
+
+
 def test_defaults_and_derived(tmp_path):
     cfg = Config.load(root=_root(tmp_path), conf=tmp_path / "none.conf")
     assert cfg.engine == "podman"

@@ -8,7 +8,16 @@
 # --- the portability contract ------------------------------------------------
 # The base image's glibc IS the floor of the resulting binaries.
 # AlmaLinux 8 = glibc 2.28 = the manylinux_2_28 baseline.
-# PIN BY DIGEST once the first run succeeds:
+#
+# Pick the base distro by NAME (a key in config/distros.yaml).  This is the
+# single knob: it sets BUILDER_BASE (the image, hence the glibc floor) and the
+# package manager that selects the builder Containerfile.  See the choices and
+# their glibc/gcc with `mspack survey table`; only dnf (rpm) and apt (deb) bases
+# can seed the bootstrap today.  mspack-only; multispack.sh still uses BUILDER_BASE.
+#BASE_DISTRO=alma8          # e.g. alma8, alma9, debian12, debian13, ubuntu2204
+#
+# BUILDER_BASE overrides the image derived from BASE_DISTRO -- use it to PIN BY
+# DIGEST once the first run succeeds:
 #   BUILDER_BASE=docker.io/library/almalinux@sha256:....
 #BUILDER_BASE=docker.io/library/almalinux:8
 #TARGET=x86_64_v3
