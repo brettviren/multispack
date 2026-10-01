@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 
 from . import deploy, phases
+from . import image as image_mod
 from . import survey as survey_mod
 from .config import Config
 from .container import ContainerError, Engine
@@ -71,8 +72,8 @@ def _fail(msg: str):
 def _run(fn, *args, **kwargs):
     try:
         fn(*args, **kwargs)
-    except (ContainerError, FileNotFoundError, ValueError, OSError,
-            RuntimeError) as err:
+    except (ContainerError, FileNotFoundError, FileExistsError, ValueError,
+            OSError, RuntimeError) as err:
         _fail(str(err))
 
 
@@ -143,6 +144,70 @@ def makenv(ctx, spack_yaml, image, name, repos, managed, nocheck):
     """Concretize + install an arbitrary Spack env (SPACK_YAML) into the store."""
     _run(phases.makenv, ctx.obj.cfg, ctx.obj.engine, spack_yaml,
          image=image, name=name, repos=list(repos), managed=managed, nocheck=nocheck)
+
+
+@cli.command("image")
+@click.option("-e", "--env", "env", required=True,
+              help="env name (a dir under $CVMFS_ROOT/env, or a managed env).")
+@click.option("-b", "--base", default=None,
+              help="runtime base: an mspack image name (e.g. alma9-devel) or a "
+                   "full image ref (default: <BASE_DISTRO>-devel).")
+@click.option("-t", "--tag", default=None,
+              help="image tag (default: IMG_PREFIX/<env>:<YYYYMMDD>).")
+@click.option("--closure", "scope", flag_value="closure", default=True,
+              help="ship only the env's link/run closure (+ compilers) [default].")
+@click.option("--all-store", "scope", flag_value="all",
+              help="ship every installed spec in the store.")
+@click.option("--compilers", type=click.Choice(["target", "all", "none"]),
+              default="target", show_default=True,
+              help="store compilers to ship: GCC_TARGET_SPEC, all, or none.")
+@click.option("-r", "--repos", "repos", multiple=True, metavar="[NAME=]DIR",
+              help="the same local recipe clones given to makenv --repos "
+                   "(they ship in the image at $CVMFS_ROOT/repos/NAME).")
+@click.option("--no-bootstrap", "bootstrap", is_flag=True, default=True,
+              flag_value=False,
+              help="do not bake clingo for the base's python (no concretizing).")
+@click.option("--spack-deps/--no-spack-deps", default=True, show_default=True,
+              help="add the OS tools Spack needs (git, python3, ...) to the base "
+                   "as a small <base>-spack layer.")
+@click.option("--workdir", default=None, type=click.Path(file_okay=False),
+              help="scratch dir for the payload (needs ~payload size; default "
+                   "$TMPDIR/mspack-image-<env>).")
+@click.option("--keep", is_flag=True, help="keep the work dir (plan, payload).")
+@click.option("--sif", "sif_out", default=None, type=click.Path(dir_okay=False),
+              help="also convert the result to this Apptainer SIF.")
+@click.pass_context
+def image_cmd(ctx, env, base, tag, scope, compilers, repos, bootstrap,
+              spack_deps, workdir, keep, sif_out):
+    """Build a monolithic OCI runtime image of one built env (podman).
+
+    Ships the env's install closure, Spack + read-only site config, the env dir
+    (view, spack.yaml, spack.lock), its recipe repos and a clingo bootstrap, as
+    one layer over a runtime base; excludes stage/caches/buildcache/tmp.
+    """
+    def _do():
+        rec = image_mod.image(ctx.obj.cfg, ctx.obj.engine, env, base=base,
+                              tag=tag, scope=scope, compilers=compilers,
+                              repos=list(repos), bootstrap=bootstrap,
+                              spack_deps=spack_deps, workdir=workdir, keep=keep)
+        if sif_out:
+            image_mod.sif(ctx.obj.cfg, ctx.obj.engine, rec["tag"], sif_out,
+                          force=True)
+    _run(_do)
+
+
+@cli.command("sif")
+@click.argument("image_ref")
+@click.argument("out", required=False)
+@click.option("-f", "--force", is_flag=True, help="overwrite OUT.")
+@click.option("--workdir", default=None, type=click.Path(file_okay=False),
+              help="scratch dir for the oci-archive (default $TMPDIR).")
+@click.pass_context
+def sif_cmd(ctx, image_ref, out, force, workdir):
+    """Convert podman image IMAGE_REF to an Apptainer SIF OUT
+    (default: <name>-<tag>.sif)."""
+    _run(image_mod.sif, ctx.obj.cfg, ctx.obj.engine, image_ref, out,
+         workdir=workdir, force=force)
 
 
 @cli.command("export-conda")

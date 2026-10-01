@@ -1,0 +1,32 @@
+# mspack image: the runtime base + the few OS tools Spack itself needs to run.
+#
+# `mspack image` layers a Spack env (store closure, Spack, repos) over a runtime
+# base such as alma9-devel.  Spack constructs its git-backed package repos
+# eagerly and refuses to start without `git` (even for `spack find <spec>`), and
+# it needs python3 plus the usual unpackers to fetch/concretize.  This small
+# layer adds exactly that; everything else still comes from /cvmfs.
+# Built by `mspack image` (tag <base>-spack), not by `mspack images`.
+ARG BASE_IMG=docker.io/library/almalinux:9
+FROM ${BASE_IMG}
+
+LABEL org.opencontainers.image.description="runtime base + the OS tools Spack needs (git, python3, unpackers)"
+
+RUN set -eux; \
+    if command -v dnf >/dev/null 2>&1; then \
+        dnf -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs install \
+            git-core python3 xz bzip2 unzip patch file which tar gzip; \
+        dnf -y --setopt=tsflags=nodocs install glibc-langpack-en || true; \
+        dnf clean all; rm -rf /var/cache/dnf; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates python3 xz-utils bzip2 unzip patch file; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v zypper >/dev/null 2>&1; then \
+        zypper -n install --no-recommends git-core python3 xz bzip2 unzip patch file which tar gzip; \
+        zypper clean -a; \
+    else \
+        echo "spack-runtime: no dnf/apt-get/zypper in ${BASE_IMG}" >&2; exit 1; \
+    fi; \
+    git --version; python3 --version; \
+    git config --system --add safe.directory '*'
