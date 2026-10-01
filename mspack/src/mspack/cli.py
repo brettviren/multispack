@@ -24,11 +24,16 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 class App:
     """Shared state: resolved Config plus a ready Engine."""
 
-    def __init__(self, root, conf, engine, dry_run, base_distro=None):
-        overrides = {"BASE_DISTRO": base_distro} if base_distro else None
+    def __init__(self, root, conf, engine, dry_run, base_distro=None,
+                 meta_dir=None):
+        overrides = {}
+        if base_distro:
+            overrides["BASE_DISTRO"] = base_distro
+        if meta_dir:
+            overrides["META_DIR"] = meta_dir
         self.cfg = Config.load(root=Path(root) if root else None,
                                conf=Path(conf) if conf else None,
-                               overrides=overrides)
+                               overrides=overrides or None)
         eng = engine or self.cfg.engine
         self.engine = Engine(engine=eng, dry_run=dry_run)
 
@@ -45,12 +50,17 @@ class App:
               help="Base distro key from config/distros.yaml (sets the glibc "
                    "floor + builder); default: config BASE_DISTRO. See "
                    "`mspack survey table`.")
+@click.option("--meta-dir", default=None, type=click.Path(file_okay=False),
+              help="Directory for phase records/logs, mounted at "
+                   "/multispack/meta (default: config META_DIR, else "
+                   "./meta in the current directory).")
 @click.option("--dry-run", is_flag=True,
               help="Print the container commands that would run; execute none.")
 @click.pass_context
-def cli(ctx, root, conf, engine, base_distro, dry_run):
+def cli(ctx, root, conf, engine, base_distro, meta_dir, dry_run):
     """mspack: build and deploy the multispack Strategy B Spack stack."""
-    ctx.obj = App(root, conf, engine, dry_run, base_distro=base_distro)
+    ctx.obj = App(root, conf, engine, dry_run, base_distro=base_distro,
+                  meta_dir=meta_dir)
 
 
 def _fail(msg: str):

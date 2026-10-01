@@ -64,6 +64,11 @@ DEFAULTS: dict[str, str | None] = {
     "MAKENV_IMAGE": "builder",
     "DEPLOY_DIR": None,                      # $HERE/deploy
     "SPAXI_SRC": None,                       # $HERE/python/spaxi
+    # Where phase records/logs go (bind-mounted at /multispack/meta).  Default:
+    # ./meta under the directory mspack is INVOKED from (not the multispack
+    # root), so a project driving mspack with its own --conf keeps its own
+    # records.  A relative value resolves against the invocation directory.
+    "META_DIR": None,                        # $PWD/meta
     "MAKENV_MANAGED": "0",
     "DEV_MOUNTS": "1",
     "SEL": "",
@@ -169,6 +174,8 @@ class Config:
             vals["DEPLOY_DIR"] = str(root / "deploy")
         if not vals.get("SPAXI_SRC"):
             vals["SPAXI_SRC"] = str(root / "python" / "spaxi")
+        meta = Path(os.path.expanduser(vals.get("META_DIR") or "meta"))
+        vals["META_DIR"] = str(meta if meta.is_absolute() else Path.cwd() / meta)
         return cls(root=root, values=vals, distro=entry)
 
     # -- typed accessors ----------------------------------------------------
@@ -188,7 +195,7 @@ class Config:
 
     @property
     def meta_dir(self) -> Path:
-        return self.root / "meta"
+        return Path(self.values["META_DIR"])
 
     @property
     def builder_img(self) -> str:

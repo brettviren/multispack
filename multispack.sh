@@ -103,7 +103,9 @@ CONF="${MULTISPACK_CONF:-$HERE/multispack.conf}"
 # SELinux volume suffix; set to ":z" on an enforcing host if mounts are denied.
 : "${SEL:=}"
 
-META="$HERE/meta"
+# META_DIR (conf/env) relocates phase records; default stays under the repo.
+META="${META_DIR:-$HERE/meta}"
+case "$META" in /*) ;; *) META="$PWD/$META" ;; esac
 BUILDER_IMG="${IMG_PREFIX}/builder:${IMG_TAG}"
 
 ### ------------------------------ helpers ----------------------------------

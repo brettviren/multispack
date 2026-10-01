@@ -25,6 +25,7 @@ IGNORED_JUNK=whatever   # trailing comment
 
 
 def _root(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "multispack.sh").write_text("#!/bin/sh\n")
     return tmp_path
 
@@ -153,3 +154,40 @@ def test_volume_mounts_rw_and_ro(tmp_path):
     joined = " ".join(ro)
     assert "multispack-cvmfs:/cvmfs:ro" in joined
     assert "/multispack/cache" not in joined         # only cvmfs, read-only
+
+
+def test_meta_dir_defaults_to_cwd_not_root(tmp_path, monkeypatch):
+    root = _root(tmp_path / "ms")
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    cfg = Config.load(root=root, conf=tmp_path / "none.conf")
+    assert cfg.meta_dir == work / "meta"
+    assert cfg["META_DIR"] == str(work / "meta")
+
+
+def test_meta_dir_conf_env_override_and_mount(tmp_path, monkeypatch):
+    root = _root(tmp_path)
+    (root / "multispack.conf").write_text("META_DIR=records\n")
+    cfg = Config.load(root=root)
+    assert cfg.meta_dir == tmp_path / "records"      # relative -> cwd (tmp_path)
+    monkeypatch.setenv("META_DIR", str(tmp_path / "envmeta"))
+    cfg = Config.load(root=root)
+    assert cfg.meta_dir == tmp_path / "envmeta"
+    cfg = Config.load(root=root, overrides={"META_DIR": str(tmp_path / "cli")})
+    assert cfg.meta_dir == tmp_path / "cli"
+    joined = " ".join(cfg.volume_mounts())
+    assert f"{tmp_path / 'cli'}:/multispack/meta" in joined
+    assert (tmp_path / "cli").is_dir()
+
+
+def test_cli_meta_dir_option(tmp_path):
+    from click.testing import CliRunner
+    from mspack.cli import cli
+    root = _root(tmp_path)
+    res = CliRunner().invoke(cli, ["--root", str(root), "--conf",
+                                   str(tmp_path / "none.conf"),
+                                   "--meta-dir", str(tmp_path / "m"),
+                                   "config", "META_DIR"])
+    assert res.exit_code == 0, res.output
+    assert res.output.strip() == str(tmp_path / "m")
