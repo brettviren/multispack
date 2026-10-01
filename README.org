@@ -34,7 +34,10 @@ Supported deployments:
 - Simply use the resulting podman volumes holding Spack Install area and binary buildcache.
 - Export the buildcache to be served over HTTP for external Spack installs.
 - Export the Spack Install area to a Conda package channel for use with pixi.
+- Bake one environment into a monolithic runtime image (=mspack image=, OCI via podman) and convert it to Apptainer (=mspack sif=).  See [[file:docs/deploy.md]].
 - more t.b.d.
+
+An external project can drive =mspack= with its own configuration and volumes: =mspack --root ~/dev/multispack --conf PROJECT/multispack.conf <cmd>=.  Phase records go to =META_DIR= (default =./meta= of the directory =mspack= runs in).  =mspack makenv --repos [NAME=]DIR= (repeatable) mounts local recipe clones at =$CVMFS_ROOT/repos/NAME=.
 
 * Multispack caveats 
 

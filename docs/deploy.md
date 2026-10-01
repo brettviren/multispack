@@ -9,6 +9,7 @@ HTTP; neither requires the end user to touch the podman volumes.
 |--------|----------|----------|-----------|
 | 1. Spack buildcache | `cache-export` | `cache-client` + Spack | Spack |
 | 2. conda channel    | `conda-export` (spaxi) | `pixi` | pixi (no Spack) |
+| 3. monolithic image | `mspack image` (+ `mspack sif`) | podman / Apptainer | the env at its `/cvmfs` path, Spack optional |
 
 Artifacts land under `deploy/` by default (git-ignored); override with `DEPLOY_DIR`.
 
@@ -136,6 +137,81 @@ pixi add wire-cell-toolkit        # or: spaxi add-spec 'wire-cell-toolkit@0.37.1
 
 See the spaxi docs (`python/spaxi/README.org`) for the pixi-side details (channel URL,
 the `__glibc` virtual, disambiguation).
+
+---
+
+## Scheme 3 — a monolithic runtime image (OCI and SIF)
+
+One built Spack environment, baked with its install closure into a container image
+at the very same absolute `/cvmfs/<host>` paths it was built at.  Best for
+tutorials and classrooms: every user sees identical paths and nothing needs to be
+installed.  Spack itself keeps working inside the image, read-only.
+
+### Provider
+
+```sh
+mspack image --env NAME                          # -> IMG_PREFIX/NAME:<YYYYMMDD>
+mspack image --env NAME --tag ghcr.io/me/NAME:1.0 --sif NAME.sif
+mspack image --env NAME --all-store              # ship the whole store, not the closure
+mspack image --env NAME --repos ~/src/my-recipes # same dev clones as makenv --repos
+mspack sif localhost/me/NAME:1.0 NAME.sif        # any podman image -> SIF
+```
+
+What goes in, as **one** layer over the runtime base:
+
+| path | content |
+|------|---------|
+| `$CVMFS_ROOT/opt/...` | the link/run closure of the env's roots plus the shipped compiler (`--compilers target`, default: `GCC_TARGET_SPEC`; or `all`/`none`); `--all-store` ships every installed spec.  The store DB is pruned to match, so `spack find` shows exactly what ships. |
+| `$CVMFS_ROOT/env/NAME` | the env dir: `spack.yaml`, `spack.lock`, the view, plus `mspack-image.json` (what was shipped) |
+| `$CVMFS_ROOT/env/gcc` | `env.sh` of the shipped compiler |
+| `$CVMFS_ROOT/spack` | the Spack clone with a runtime site config: caches under the user's dir, `locks: false`, no buildcache mirror, unshipped compiler externals removed |
+| `$CVMFS_ROOT/repos/<name>` | git recipe repos (incl. `builtin`), copied from the work volume's clones and found through a site `destination:` override, so the env's `spack.yaml` is shipped verbatim |
+| `$CVMFS_ROOT/bootstrap/store` | clingo, bootstrapped for the **base image's** python |
+| `/etc/profile.d/mspack-NAME.sh`, image `ENV` | what `spack env activate` sets (view on `PATH`, `CMAKE_PREFIX_PATH`, ...), the compiler's `bin`, `SPACK_ROOT`, `SPACK_ENV`; the profile script also defines the `spack` shell function |
+| `/usr/local/bin/spack` | wrapper that seeds the per-user bootstrap root, then runs Spack |
+| `/work` | empty, mode 1777: a bind target for tutorial files |
+
+Not shipped: build/test stage, source and misc caches, the buildcache, `tmp`, the
+Spack user cache, failure markers, and anything not installed (the throwaway
+stage-1 bootstrap gcc is already uninstalled by the `compiler` phase).
+
+The base is `--base NAME` (an mspack image name, default `<BASE_DISTRO>-devel`, so
+the shipped gcc can compile) or a full image reference.  `mspack image` first
+derives `<base>-spack` from it (`containers/Containerfile.spack-runtime`: git,
+python3, unpackers), because Spack refuses to start without git once a recipe repo
+is git-backed.  `--no-spack-deps` skips that; `--no-bootstrap` skips clingo (no
+concretizing in the image).
+
+Labels: `io.mspack.env`, `io.mspack.spack-lock.sha256`, `io.mspack.spack.commit`,
+`io.mspack.multispack.commit`, `io.mspack.cvmfs-root`, `io.mspack.view`,
+`org.opencontainers.image.{created,revision,base.name,title}`.  A record also goes
+to `META_DIR/image-NAME.detail.json`.
+
+How it is built (all rootless): a builder container runs `bin/image-plan.py`
+(`spack -e ENV python`) and `bin/image-payload.sh` (one `tar`, owned root:root,
+repo paths renamed on the fly); the host appends that tar to the base image's
+`podman save` docker-archive and streams the result into `podman load`.  It
+avoids `podman build` on purpose: podman 4.3 stages a build's layers in
+`/var/tmp` whatever `TMPDIR` says, and a many-GB payload does not fit there.
+Disk use is about 3x the payload: the tar in `--workdir` (default
+`$TMPDIR/mspack-image-NAME`, removed unless `--keep`), podman's load copy, and the
+image itself.  `mspack sif` adds an oci-archive and Apptainer's scratch copy, both
+temporary under `$TMPDIR`.
+
+### User
+
+```sh
+podman run --rm -it -v $PWD:/work localhost/me/NAME:1.0          # login shell, env active
+apptainer exec --bind $PWD:/work NAME.sif bash -l                # same with Apptainer
+apptainer exec NAME.sif g++ --version                            # ENV applies without a login shell
+```
+
+Inside: `spack find`, `spack load PKG`, `spack env activate $MSPACK_ENV_DIR`, and
+`spack spec`/`concretize` all work with `/cvmfs` read-only and offline.  Per-user
+Spack state (caches, the clingo bootstrap root) goes to
+`$HOME/.mspack/<host>`, apart from a host Spack's `~/.spack`.  Installing is
+not possible into the read-only store; a developer who wants to add packages
+uses the image's store as a Spack upstream for their own install tree.
 
 ---
 
