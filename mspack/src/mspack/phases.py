@@ -108,17 +108,66 @@ def compiler(cfg: Config, engine: Engine, extra_specs=()) -> None:
                 extra_env={"EXTRA_GCC_SPECS": extra})
 
 
+def parse_repos(specs) -> list[tuple[str, Path]]:
+    """Resolve ``makenv --repos`` values to ``(name, abs_dir)`` pairs.
+
+    Each value is ``DIR`` (mounted at ``$CVMFS_ROOT/repos/<basename DIR>``) or
+    ``NAME=DIR`` (mounted at ``$CVMFS_ROOT/repos/NAME``).  The legacy whole-tree
+    form ``=DIR`` (empty NAME) mounts DIR *as* ``$CVMFS_ROOT/repos``; it must be
+    the only value, because nothing can be bind-mounted inside a read-only bind.
+    """
+    out: list[tuple[str, Path]] = []
+    for raw in specs or ():
+        if "=" in raw:
+            name, d = raw.split("=", 1)
+        else:
+            name, d = None, raw
+        path = Path(d).expanduser().resolve()
+        if not path.is_dir():
+            raise FileNotFoundError(f"makenv: --repos is not a directory: {d}")
+        if name is None:
+            name = path.name
+        if name and not _ENV_NAME_RE.match(name):
+            raise ValueError(
+                f"makenv: --repos NAME must be a simple path component: '{name}'")
+        out.append((name, path))
+    names = [n for n, _ in out]
+    if "" in names and len(out) > 1:
+        raise ValueError("makenv: --repos =DIR (whole repos tree) cannot be "
+                         "combined with other --repos values")
+    dups = sorted({n for n in names if names.count(n) > 1})
+    if dups:
+        raise ValueError(f"makenv: duplicate --repos mount name(s): {', '.join(dups)} "
+                         f"(use NAME=DIR to disambiguate)")
+    return out
+
+
+def repo_mounts(cfg: Config, repos) -> tuple[list[str], str]:
+    """``-v`` args for parsed ``repos`` plus the MAKENV_REPOS record string."""
+    sel = cfg.sel
+    mounts: list[str] = []
+    rec: list[str] = []
+    for name, path in repos:
+        tgt = f"{cfg.cvmfs_root}/repos" + (f"/{name}" if name else "")
+        mounts += ["-v", f"{path}:{tgt}:ro{sel}"]
+        rec.append(f"{name}={path}")
+        print(f"[mspack] makenv: mounting repos {path} -> {tgt}")
+    return mounts, " ".join(rec)
+
+
 def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,
-           name: str | None = None, repos: str | None = None,
+           name: str | None = None, repos=None,
            managed: bool | None = None, nocheck: bool = False) -> None:
     """Concretize + install an arbitrary Spack environment into the shared store.
 
     Delegates the build to bin/phase-makenv.sh in the build image.  The whole
     env DIRECTORY (not just the yaml) is mounted at /multispack/input so relative
-    ``include:``/``repos:`` files come along; MAKENV_YAML names the manifest.  A
-    ``repos`` dir of assembled custom recipes is bound at ``$spack/../repos``.
-    Not a fixed-order phase, so it writes no numbered meta record (the phase
-    script still writes meta/makenv-<name>.detail.json); output streams live.
+    ``include:``/``repos:`` files come along; MAKENV_YAML names the manifest.
+    ``repos`` (a list, or one string) are local recipe-repo clones, each bound
+    read-only at ``$CVMFS_ROOT/repos/<name>`` (see :func:`parse_repos`) -- a dev
+    override for git ``repos:``.  Not a fixed-order phase, so it writes no
+    numbered meta record (the phase script still writes
+    meta/makenv-<name>.detail.json); output streams live.
     """
     image = image or cfg.get("MAKENV_IMAGE", "builder")
     yaml_path = Path(yaml).resolve()
@@ -130,6 +179,9 @@ def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,
     if not _ENV_NAME_RE.match(name):
         raise ValueError(
             f"makenv: --name must be a simple path component: '{name}'")
+    if isinstance(repos, str):
+        repos = [repos]
+    parsed = parse_repos(repos)
 
     img = cfg.image(image)
     if not engine.image_exists(img):
@@ -141,14 +193,8 @@ def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,
 
     sel = cfg.sel
     mounts = cfg.volume_mounts(ro=False)
-    repos_abs = ""
-    if repos:
-        repos_path = Path(repos).resolve()
-        if not repos_path.is_dir():
-            raise FileNotFoundError(f"makenv: --repos is not a directory: {repos}")
-        repos_abs = str(repos_path)
-        mounts += ["-v", f"{repos_abs}:{cfg.cvmfs_root}/repos:ro{sel}"]
-        print(f"[mspack] makenv: mounting repos {repos_abs} -> {cfg.cvmfs_root}/repos")
+    rmounts, repos_rec = repo_mounts(cfg, parsed)
+    mounts += rmounts
     mounts += ["-v", f"{yaml_path.parent}:/multispack/input:ro{sel}"]
 
     env = dict(cfg.container_env())
@@ -157,7 +203,7 @@ def makenv(cfg: Config, engine: Engine, yaml, *, image: str | None = None,
         "MAKENV_NAME": name,
         "MAKENV_NOCHECK": "1" if nocheck else "0",
         "MAKENV_IMAGE": image,
-        "MAKENV_REPOS": repos_abs,
+        "MAKENV_REPOS": repos_rec,
         "MAKENV_MANAGED": "1" if managed else "0",
     })
     print(f"[mspack] makenv: build env '{name}' from {yaml_path} in image '{image}'")

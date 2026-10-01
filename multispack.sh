@@ -349,17 +349,18 @@ cmd_compiler_validate() {
 # install tree and buildcache, in the chosen build container.  The container is
 # checked for the required non-Spack (OS-level) dependencies before installing.
 cmd_makenv() {
-    local image="${MAKENV_IMAGE}" name="" yaml="" nocheck=0 repos="" managed="${MAKENV_MANAGED}"
+    local image="${MAKENV_IMAGE}" name="" yaml="" nocheck=0 managed="${MAKENV_MANAGED}"
+    local repos_in=()
     while [ $# -gt 0 ]; do
         case "$1" in
             -i|--image) image="${2:?--image needs a value}"; shift 2 ;;
             -n|--name)  name="${2:?--name needs a value}"; shift 2 ;;
-            -r|--repos) repos="${2:?--repos needs a value}"; shift 2 ;;
+            -r|--repos) repos_in+=("${2:?--repos needs a value}"); shift 2 ;;
             --managed)  managed=1; shift ;;
             --directory) managed=0; shift ;;
             --no-check) nocheck=1; shift ;;
             -h|--help)
-                echo "usage: multispack.sh makenv [--image NAME] [--name ENV] [--repos DIR] [--managed] [--no-check] <spack.yaml>"
+                echo "usage: multispack.sh makenv [--image NAME] [--name ENV] [--repos [NAME=]DIR]... [--managed] [--no-check] <spack.yaml>"
                 return 0 ;;
             --) shift; [ -z "$yaml" ] && [ $# -gt 0 ] && { yaml="$1"; shift; }; break ;;
             -*) die "makenv: unknown option: $1" ;;
@@ -384,17 +385,28 @@ cmd_makenv() {
     "$ENGINE" image exists "$img" 2>/dev/null \
         || die "makenv: image not built: ${img}  (build it: ./multispack.sh images ${image})"
 
-    # Custom package repos referenced by the spack.yaml.  Its `repos:` paths use
-    # `$spack/../repos/...`, which in the container is ${CVMFS_ROOT}/repos, so we
-    # bind the assembled repo tree there (read-only).  Assembling those repos is
-    # the upstream env's job (e.g. xerosere's mr/.mrconfig); makenv just consumes.
-    local repo_args=()
-    if [ -n "$repos" ]; then
-        [ -d "$repos" ] || die "makenv: --repos is not a directory: $repos"
-        repos="$(cd "$repos" && pwd)"
-        repo_args=(-v "${repos}:${CVMFS_ROOT}/repos:ro${SEL}")
-        msg "makenv: mounting repos ${repos} -> ${CVMFS_ROOT}/repos"
-    fi
+    # Local recipe-repo clones (a dev override for the env's git `repos:`).
+    # Each `--repos DIR` binds DIR read-only at ${CVMFS_ROOT}/repos/<basename DIR>;
+    # `--repos NAME=DIR` binds it at ${CVMFS_ROOT}/repos/NAME.  A spack.yaml
+    # refers to them as `$spack/../repos/NAME/...`.  The legacy `--repos =DIR`
+    # binds DIR AS ${CVMFS_ROOT}/repos (whole tree; must be the only --repos).
+    local repo_args=() repos="" r rname rdir seen=" "
+    for r in "${repos_in[@]}"; do
+        case "$r" in *=*) rname="${r%%=*}"; rdir="${r#*=}" ;; *) rname="-"; rdir="$r" ;; esac
+        [ -d "$rdir" ] || die "makenv: --repos is not a directory: $rdir"
+        rdir="$(cd "$rdir" && pwd)"
+        [ "$rname" = "-" ] && rname="$(basename "$rdir")"
+        case "$rname" in *[!A-Za-z0-9._-]*) die "makenv: --repos NAME must be a simple path component: '$rname'" ;; esac
+        if [ -z "$rname" ] && [ ${#repos_in[@]} -gt 1 ]; then
+            die "makenv: --repos =DIR (whole repos tree) cannot be combined with other --repos"
+        fi
+        case "$seen" in *" $rname "*) die "makenv: duplicate --repos mount name '$rname' (use NAME=DIR)" ;; esac
+        seen+="$rname "
+        local tgt="${CVMFS_ROOT}/repos${rname:+/$rname}"
+        repo_args+=(-v "${rdir}:${tgt}:ro${SEL}")
+        repos+="${repos:+ }${rname}=${rdir}"
+        msg "makenv: mounting repos ${rdir} -> ${tgt}"
+    done
 
     # Mount the whole env DIRECTORY (not just the yaml) so relative `include:` files
     # (repos.yaml, packages.yaml, groups/*.yaml, ...) come along; MAKENV_YAML names

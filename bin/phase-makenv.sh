@@ -93,8 +93,9 @@ fi
 # A spack.yaml may declare custom package repos (`repos:`), whose paths are only
 # valid if those repos are present in THIS container.  Spack merely warns and
 # continues when one is missing, then fails much later with "unknown package", so
-# catch it now.  Provide the repos with `makenv --repos DIR` (bound at
-# $spack/../repos == ${CVMFS_ROOT}/repos).
+# catch it now.  Provide local clones with `makenv --repos [NAME=]DIR` (each bound
+# at $spack/../repos/NAME == ${CVMFS_ROOT}/repos/NAME; NAME defaults to DIR's
+# basename), or reference them by git remote in the spack.yaml.
 if [ "$NOCHECK" != 1 ]; then
     say "gate R: environment package repos resolve in this container?"
     repo_out="$(spack -e "$ENVREF" repo list 2>&1)"
@@ -102,10 +103,10 @@ if [ "$NOCHECK" != 1 ]; then
         echo "makenv: the environment declares package repos that are not present here:" >&2
         printf '%s\n' "$repo_out" | grep -iE "No repo\.yaml|Error constructing repository" \
             | sed 's/^/    /' | sort -u >&2
-        echo "makenv: assemble those repos and pass them with --repos <dir> (mounted at" >&2
-        echo "        \$spack/../repos == ${CVMFS_ROOT}/repos), or fix the spack.yaml paths." >&2
+        echo "makenv: pass local clones with --repos [NAME=]DIR (each mounted at" >&2
+        echo "        \$spack/../repos/NAME == ${CVMFS_ROOT}/repos/NAME), or fix the spack.yaml paths." >&2
         [ -n "${MAKENV_REPOS:-}" ] \
-            && echo "makenv: (--repos ${MAKENV_REPOS} was mounted; check its subdirectory layout)" >&2
+            && echo "makenv: (mounted NAME=DIR: ${MAKENV_REPOS}; check the names and subdirectory layout)" >&2
         exit 7
     fi
 fi

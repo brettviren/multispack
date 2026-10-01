@@ -116,8 +116,43 @@ def test_makenv_explicit_name_repos_managed(tmp_path):
     assert "MAKENV_NAME=rel-2026" in run
     assert "MAKENV_MANAGED=1" in run
     assert "MAKENV_NOCHECK=1" in run
-    assert f"{repos}:{cfg.cvmfs_root}/repos:ro" in joined
-    assert f"MAKENV_REPOS={repos}" in run
+    assert f"{repos}:{cfg.cvmfs_root}/repos/recipes:ro" in joined
+    assert f"MAKENV_REPOS=recipes={repos}" in run
+
+
+def test_makenv_multiple_repos_named_and_basename(tmp_path):
+    cfg = _repo(tmp_path)
+    yaml = _env_yaml(tmp_path)
+    a = tmp_path / "clones" / "nusofthep-spack-recipes"
+    b = tmp_path / "xerosere-spack"
+    a.mkdir(parents=True)
+    b.mkdir()
+    eng = Engine(dry_run=True)
+    phases.makenv(cfg, eng, str(yaml), repos=[str(a), f"dune_tdm={b}"])
+    run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
+    joined = " ".join(run)
+    r = cfg.cvmfs_root
+    assert f"{a}:{r}/repos/nusofthep-spack-recipes:ro" in joined
+    assert f"{b}:{r}/repos/dune_tdm:ro" in joined
+    assert f"MAKENV_REPOS=nusofthep-spack-recipes={a} dune_tdm={b}" in run
+
+
+def test_parse_repos_legacy_and_errors(tmp_path):
+    import pytest
+    cfg = _repo(tmp_path)
+    d = tmp_path / "tree"
+    d.mkdir()
+    # legacy: '=DIR' mounts the whole tree at $CVMFS_ROOT/repos
+    mounts, rec = phases.repo_mounts(cfg, phases.parse_repos([f"={d}"]))
+    assert mounts == ["-v", f"{d}:{cfg.cvmfs_root}/repos:ro"]
+    with pytest.raises(ValueError):           # legacy cannot combine
+        phases.parse_repos([f"={d}", str(d)])
+    with pytest.raises(ValueError):           # duplicate names
+        phases.parse_repos([str(d), f"tree={d}"])
+    with pytest.raises(ValueError):           # bad name
+        phases.parse_repos([f"a/b={d}"])
+    with pytest.raises(FileNotFoundError):
+        phases.parse_repos([str(tmp_path / "nope")])
 
 
 def test_makenv_bad_name_rejected(tmp_path):

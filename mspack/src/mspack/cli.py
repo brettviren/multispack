@@ -115,8 +115,11 @@ def compiler(ctx, specs):
               help="build image (default: MAKENV_IMAGE, i.e. builder).")
 @click.option("-n", "--name", default=None,
               help="env name under /cvmfs/env (default: the yaml's parent dir).")
-@click.option("-r", "--repos", default=None, type=click.Path(file_okay=False),
-              help="assembled custom recipe repos, mounted at $spack/../repos.")
+@click.option("-r", "--repos", "repos", multiple=True, metavar="[NAME=]DIR",
+              help="local recipe-repo clone, mounted read-only at "
+                   "$CVMFS_ROOT/repos/NAME (NAME defaults to DIR's basename). "
+                   "Repeatable.  '=DIR' mounts DIR as $CVMFS_ROOT/repos itself "
+                   "(legacy, alone only).")
 @click.option("--managed/--directory", "managed", default=None,
               help="managed named env vs by-path directory env "
                    "(default: MAKENV_MANAGED).")
@@ -126,7 +129,7 @@ def compiler(ctx, specs):
 def makenv(ctx, spack_yaml, image, name, repos, managed, nocheck):
     """Concretize + install an arbitrary Spack env (SPACK_YAML) into the store."""
     _run(phases.makenv, ctx.obj.cfg, ctx.obj.engine, spack_yaml,
-         image=image, name=name, repos=repos, managed=managed, nocheck=nocheck)
+         image=image, name=name, repos=list(repos), managed=managed, nocheck=nocheck)
 
 
 @cli.command("export-conda")
