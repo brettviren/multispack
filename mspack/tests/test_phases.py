@@ -183,3 +183,17 @@ def test_compiler_passes_extra_specs(tmp_path):
     run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
     assert "EXTRA_GCC_SPECS=gcc@14 gcc@11" in run
     assert "GCC_SPEC=gcc@12" in run              # base moved to gcc@12
+
+
+def test_compiler_validate_runs_each_readonly(tmp_path):
+    cfg = _repo(tmp_path)
+    eng = Engine(dry_run=True)
+    phases.compiler_validate(cfg, eng, ["alma8", "alma9-devel"])
+    runs = [c for c in eng.calls if c[:2] == ["podman", "run"]]
+    assert len(runs) == 2
+    assert cfg.image("alma9-devel") in runs[1]
+    joined = " ".join(runs[0])
+    assert "multispack-cvmfs:/cvmfs:ro" in joined
+    assert "/multispack/work" not in joined
+    assert "/opt/multispack/tests/run-compiler-validation.sh" in runs[0]
+    assert (cfg.meta_dir / "46-compiler-validate-alma8.json").is_file()

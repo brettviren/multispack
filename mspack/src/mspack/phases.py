@@ -108,6 +108,40 @@ def compiler(cfg: Config, engine: Engine, extra_specs=()) -> None:
                 extra_env={"EXTRA_GCC_SPECS": extra})
 
 
+def compiler_validate(cfg: Config, engine: Engine,
+                      names: list[str] | None = None) -> list[str]:
+    """Run tests/run-compiler-validation.sh in each validator image (== the
+    shell's compiler-validate): /cvmfs read-only, nothing from the distro.
+
+    Each distro gets its own ``compiler-validate-<d>`` record; returns the list
+    of distros that failed (and raises if any did, after running them all).
+    """
+    want = names or (cfg.validators + cfg.devel_validators)
+    failed: list[str] = []
+    for d in want:
+        img = cfg.image(d)
+        try:
+            with stage(cfg, f"compiler-validate-{d}",
+                       f"run {cfg['GCC_TARGET_SPEC']} validation on {d}",
+                       command="run-compiler-validation.sh") as h:
+                if not engine.image_exists(img):
+                    raise FileNotFoundError(
+                        f"compiler-validate: image not built: {img} "
+                        f"(mspack images {d})")
+                engine.run(img, ["/bin/sh",
+                                 "/opt/multispack/tests/run-compiler-validation.sh"],
+                           mounts=cfg.volume_mounts(ro=True),
+                           env={"CVMFS_ROOT": cfg.cvmfs_root, "DISTRO": d,
+                                "GCC_TARGET_SPEC": cfg["GCC_TARGET_SPEC"]},
+                           rm=True, log_path=h.log_path)
+        except Exception as err:            # keep going; report at the end
+            print(f"[mspack] compiler validation on {d} failed: {err}")
+            failed.append(d)
+    if failed:
+        raise RuntimeError(f"compiler-validate failed on: {' '.join(failed)}")
+    return failed
+
+
 def parse_repos(specs) -> list[tuple[str, Path]]:
     """Resolve ``makenv --repos`` values to ``(name, abs_dir)`` pairs.
 

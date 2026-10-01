@@ -71,7 +71,8 @@ def _fail(msg: str):
 def _run(fn, *args, **kwargs):
     try:
         fn(*args, **kwargs)
-    except (ContainerError, FileNotFoundError, ValueError, OSError) as err:
+    except (ContainerError, FileNotFoundError, ValueError, OSError,
+            RuntimeError) as err:
         _fail(str(err))
 
 
@@ -107,6 +108,18 @@ def compiler(ctx, specs):
     than the base is built best-effort with a warning.
     """
     _run(phases.compiler, ctx.obj.cfg, ctx.obj.engine, list(specs))
+
+
+@cli.command("compiler-validate")
+@click.argument("names", nargs=-1)
+@click.pass_context
+def compiler_validate(ctx, names):
+    """Prove the shipped GCC_TARGET_SPEC runs (and builds) in validator images.
+
+    NAMES default to VALIDATORS + DEVEL_VALIDATORS; /cvmfs is mounted read-only.
+    """
+    _run(phases.compiler_validate, ctx.obj.cfg, ctx.obj.engine,
+         list(names) or None)
 
 
 @cli.command()
