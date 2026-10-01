@@ -18,14 +18,21 @@ LABEL org.opencontainers.image.title="multispack builder" \
 # distribution contributes nothing to the shipped artifacts.
 # --allowerasing: AlmaLinux 9 images ship curl-minimal, which conflicts with the
 # full curl; let dnf swap it (a no-op on AlmaLinux 8).
+# Split into several RUNs on purpose: podman <= 4.3 stages each committed layer
+# in /var/tmp regardless of TMPDIR, so one ~600 MB layer fails on a host with a
+# small /var.  Same package set either way.
+ARG DNF_INSTALL="dnf -y --allowerasing --setopt=install_weak_deps=False --setopt=tsflags=nodocs install"
 RUN set -eux; \
-    dnf -y --allowerasing --setopt=install_weak_deps=False --setopt=tsflags=nodocs install \
-        gcc gcc-c++ gcc-gfortran \
-        make patch file findutils diffutils which hostname procps-ng \
+    ${DNF_INSTALL} gcc gcc-c++ binutils make patch ; \
+    dnf clean all; rm -rf /var/cache/dnf
+RUN set -eux; \
+    ${DNF_INSTALL} gcc-gfortran \
+        file findutils diffutils which hostname procps-ng \
         git curl tar gzip bzip2 xz zstd libzstd-devel unzip \
-        gawk sed grep \
-        perl perl-Data-Dumper perl-Thread-Queue \
-        binutils ca-certificates \
+        gawk sed grep ca-certificates ; \
+    dnf clean all; rm -rf /var/cache/dnf
+RUN set -eux; \
+    ${DNF_INSTALL} perl perl-Data-Dumper perl-Thread-Queue \
         python3.11 python3.11-setuptools ; \
     dnf clean all; rm -rf /var/cache/dnf
 RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python3 && python3 --version
