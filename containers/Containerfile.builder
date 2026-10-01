@@ -11,13 +11,15 @@ ARG BUILDER_BASE=docker.io/library/almalinux:8
 FROM ${BUILDER_BASE}
 
 LABEL org.opencontainers.image.title="multispack builder" \
-      org.opencontainers.image.description="Strategy B portable Spack build environment (glibc 2.28 floor)"
+      org.opencontainers.image.description="Strategy B portable Spack build environment (glibc floor = the base image's)"
 
 # Only what Spack itself needs to run and to bootstrap its first compiler.
 # Deliberately minimal: everything above libc is built by Spack, so the
 # distribution contributes nothing to the shipped artifacts.
+# --allowerasing: AlmaLinux 9 images ship curl-minimal, which conflicts with the
+# full curl; let dnf swap it (a no-op on AlmaLinux 8).
 RUN set -eux; \
-    dnf -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs install \
+    dnf -y --allowerasing --setopt=install_weak_deps=False --setopt=tsflags=nodocs install \
         gcc gcc-c++ gcc-gfortran \
         make patch file findutils diffutils which hostname procps-ng \
         git curl tar gzip bzip2 xz zstd libzstd-devel unzip \
