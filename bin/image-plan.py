@@ -184,11 +184,21 @@ for f in ("prefix_failures", "failures"):
 index = json.load(open(os.path.join(dbdir, "index.json"), encoding="utf-8"))
 installs = index["database"]["installs"]
 pruned = 0
+store_opt = os.path.join(R, "opt")
 for h, rec in installs.items():
-    if rec.get("installed") and h not in ship and not rec["spec"].get("external"):
-        if h in installed:      # a real store prefix we are not shipping
+    if not rec.get("installed") or h in ship:
+        continue
+    ext = rec["spec"].get("external")
+    if ext:
+        # an external whose prefix is an unshipped store install (e.g. the
+        # gcc@12 base compiler, recorded as an external when used)
+        xp = os.path.normpath((ext or {}).get("path") or rec.get("path") or "")
+        if under(xp, store_opt) and xp not in shipped_prefixes:
             rec["installed"] = False
             pruned += 1
+    elif h in installed:        # a real store prefix we are not shipping
+        rec["installed"] = False
+        pruned += 1
 if pruned:
     excludes.append(os.path.join(dbdir, "index.json").lstrip("/"))
     overlay_write(os.path.join(dbdir, "index.json"), json.dumps(index))
