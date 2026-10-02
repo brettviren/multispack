@@ -34,7 +34,13 @@ def volumes(cfg: Config, engine: Engine) -> None:
     """Create the three podman volumes and seed their directory layout."""
     with stage(cfg, "volumes", "create volumes and seed layout") as h:
         for name in (cfg["VOL_CVMFS"], cfg["VOL_CACHE"], cfg["VOL_WORK"]):
-            if engine.volume_exists(name):
+            if name.startswith("/"):
+                # A host directory bind-mounted in place of a named volume
+                # (`-v /abs:/cvmfs`): the store lands directly on the host.
+                if not engine.dry_run:
+                    Path(name).mkdir(parents=True, exist_ok=True)
+                print(f"[mspack] host directory {name} (bind mount, not a volume)")
+            elif engine.volume_exists(name):
                 print(f"[mspack] volume {name} already exists")
             else:
                 engine.volume_create(name)

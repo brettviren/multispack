@@ -31,6 +31,19 @@ def test_volumes_seeds_with_builder_base(tmp_path):
     assert (cfg.meta_dir / "10-volumes.json").is_file()
 
 
+def test_volumes_host_directories(tmp_path):
+    """VOL_* set to absolute host paths: bind mounts, no `podman volume`."""
+    cfg = _repo(tmp_path)
+    for k in ("VOL_CVMFS", "VOL_CACHE", "VOL_WORK"):
+        cfg.values[k] = str(tmp_path / "host" / k.lower())
+    eng = Engine(dry_run=True)
+    phases.volumes(cfg, eng)
+    assert not [c for c in eng.calls if c[1:2] == ["volume"]]
+    run = [c for c in eng.calls if c[:2] == ["podman", "run"]][-1]
+    assert f"{tmp_path}/host/vol_cvmfs:/cvmfs" in run
+    assert f"{tmp_path}/host/vol_work:/multispack/work" in run
+
+
 def test_images_builds_each_and_writes_detail(tmp_path):
     cfg = _repo(tmp_path)
     eng = Engine(dry_run=True)

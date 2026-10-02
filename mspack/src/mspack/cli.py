@@ -224,19 +224,41 @@ def sif_cmd(ctx, image_ref, out, force, workdir):
               help="forward spaxi --log-sink (stderr|stdout|container PATH).")
 @click.option("-L", "--log-level", default=None,
               help="forward spaxi --log-level (debug|info|warning|error).")
+@click.option("-z", "--compression-level", "zlevel", type=int, default=None,
+              help="forward spaxi -z: zstd level 1-22 (spaxi default 19).")
+@click.option("--from-image", "from_image", default=None, metavar="REF|SIF",
+              help="convert the store baked into a runtime image (from `mspack "
+                   "image`) instead of the build volumes: a podman image ref, or "
+                   "an Apptainer .sif file.")
+@click.option("--workdir", default=None, type=click.Path(file_okay=False),
+              help="--from-image scratch dir (spack user cache, tmp, spaxi venv "
+                   "+ python; kept for re-runs). Default "
+                   "$TMPDIR/mspack-conda-<image>.")
+@click.option("--with-compiler", is_flag=True,
+              help="--from-image: also convert the image's shipped compiler "
+                   "(gcc@15) and pin it in --meta; its bootstrap closure gets "
+                   ">=version pins so it installs next to the stack.")
+@click.option("--meta", "meta", default=None, metavar="NAME[=VERSION]",
+              help="also build meta-package NAME pinning the env's roots (and "
+                   "every --spec), carrying the env's activation (default "
+                   "VERSION: today, YYYY.MM.DD).")
 @click.pass_context
-def export_conda(ctx, dest, env, specs, jobs, image, log_sink, log_level):
-    """Convert installed Spack packages into a conda channel DEST (for pixi).
+def export_conda(ctx, dest, env, specs, jobs, image, log_sink, log_level,
+                 zlevel, from_image, workdir, with_compiler, meta):
+    """Convert installed Spack packages into a conda channel DEST.
 
     DEST is a local directory (default: DEPLOY_DIR).  With --env, converts that
-    env's roots and their runtime deps; with --spec, those specs' closures; with
-    neither, everything installed.
+    env's packages and their runtime deps, plus any --spec; with only --spec,
+    those specs' closures; with neither, everything installed.  The store is
+    the build volumes, or with --from-image the one inside a runtime image.
     """
     cfg = ctx.obj.cfg
     dest = dest or cfg.get("DEPLOY_DIR")
     req = DeployRequest(dest=dest, env=env, specs=list(specs), options={
         "jobs": jobs, "image": image, "log_sink": log_sink,
-        "log_level": log_level})
+        "log_level": log_level, "from_image": from_image,
+        "workdir": workdir, "meta": meta, "zlevel": zlevel,
+        "with_compiler": with_compiler})
     _run(deploy.get("conda")().run, cfg, ctx.obj.engine, req)
 
 
