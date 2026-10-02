@@ -8,7 +8,7 @@ HTTP; neither requires the end user to touch the podman volumes.
 | scheme | producer | consumer | user sees |
 |--------|----------|----------|-----------|
 | 1. Spack buildcache | `cache-export` | `cache-client` + Spack | Spack |
-| 2. conda channel    | `conda-export` (spaxi) | `pixi` | pixi (no Spack) |
+| 2. conda channel    | `conda-export` / `mspack export-conda [--from-image]` (spaxi) | `pixi`, `micromamba`, `conda` | conda env (no Spack) |
 | 3. monolithic image | `mspack image` (+ `mspack sif`) | podman / Apptainer | the env at its `/cvmfs` path, Spack optional |
 
 Artifacts land under `deploy/` by default (git-ignored); override with `DEPLOY_DIR`.
@@ -126,6 +126,89 @@ locally and `tar`-streaming it at the end (local staging is kept in that case).
 `repodata.json` into the channel, self-contained (no Spack store needed to link).  The
 first run downloads a Python and spaxi's dependencies (network); later runs reuse the
 mounted uv cache.
+
+### Provider, from a runtime image (hybrid: no build volumes needed)
+
+`mspack export-conda` can also read the store **baked into a runtime image**
+made by `mspack image` (Scheme 3), so a machine that only holds the image can
+produce the channel:
+
+```sh
+# a podman image ref ...
+mspack export-conda --from-image localhost/me/NAME:1.0 --env NAME \
+    --with-compiler --meta NAME=1.0 -j 48 /srv/channel
+# ... or an Apptainer SIF (run with apptainer exec --containall)
+mspack export-conda --from-image NAME.sif --env NAME --meta NAME=1.0 /srv/channel
+```
+
+The conversion script runs in the image itself (`podman run --read-only`, or
+`apptainer exec --containall`), against the image's read-only
+`$CVMFS_ROOT`.  Bound in are only: `DEST` at `/out`, a host scratch dir
+(`--workdir`, default `$TMPDIR/mspack-conda-<image>`, kept for re-runs) at
+`/mspack-work` for the Spack user cache, `TMPDIR`, a uv-managed Python and the
+spaxi venv, `SPAXI_SRC` read-only at `/spaxi`, and the host uv cache.  The host
+`uv` binary is copied into the scratch dir.  The image's `ENV` (view on `PATH`,
+`PYTHONPATH`, `LD_LIBRARY_PATH`) is cleared before spaxi and Spack run; Spack
+uses the image's runtime site config (`locks: false`, caches under
+`SPACK_USER_CACHE_PATH`), so nothing writes into `/cvmfs`.  Scratch use peaks at
+roughly the size of the largest packages in flight (spaxi tars each payload
+before compressing it).
+
+Differences from the volume mode:
+
+- `--env NAME` converts the env's **roots** (`spack find -x`) plus every
+  `--spec`, and their runtime closure.  (The volume mode converts every spec
+  `spack -e NAME find` lists.)
+- `--with-compiler` adds the image's shipped compiler (`$MSPACK_GCC_PREFIX`).
+  The env DB records that gcc as an *external* living in the store.  spaxi
+  converts the real install behind it.  Its bootstrap closure (built by gcc@12:
+  `gcc-runtime` 12, binutils, gmp, ...) gets `>=version` pins instead of exact
+  builds, so it installs next to the stack's `gcc-runtime` 15 in one
+  one-build-per-name conda env.
+
+Options for both modes:
+
+- `--meta NAME[=VERSION]` runs `spaxi meta`.  The meta-package NAME pins the
+  exact builds of the env roots, every `--spec` and the compiler, and declares
+  `__glibc >=<floor>`.  It ships:
+  - `etc/conda/{activate,deactivate}.d/NAME.sh`: the env's
+    `spack env activate` settings with the view re-rooted on `$CONDA_PREFIX`,
+    minus `PATH`, `SPACK_*` and `CC`/`CXX`/...;
+  - a `site-packages/NAME.pth` with the extra `PYTHONPATH` dirs, so Jupyter
+    kernels import them without activation;
+  - a `lib64 -> lib` link (spaxi folds `lib64` onto `lib`).
+
+  A root that failed to convert is left out of the meta-package and reported.
+- `-z N` sets the zstd level (spaxi's default is 19).
+
+Then a whole stack installs with one command:
+
+```sh
+micromamba create -p ./env -c file:///srv/channel --override-channels NAME
+```
+
+Relocation notes (spaxi branch `phaindia`):
+- ELF RPATHs become `$ORIGIN`-relative, and text and ELF files get a conda
+  prefix placeholder.  Absolute symlinks into other converted prefixes become
+  relative.
+- `__pycache__/*.pyc` is dropped.  Non-ELF binaries (`.pcm`, `.a`, caches)
+  stay byte-identical: conda's NUL-padded rewrite would corrupt their
+  length-prefixed strings.
+- Package fixups (`spaxi/fixups.py`) cover what bytes cannot.  For ROOT,
+  whose install prefix is compiled into code immediates: `ROOTIGNOREPREFIX=1`
+  plus layout links.  For gcc on Debian-family hosts: the multiarch include
+  and lib dirs.
+- A worked example, with the failures found and the consumer tests, is in
+  phaindia's `docs/conda-channel.md`.
+
+### Host directories instead of named volumes
+
+`VOL_CVMFS`, `VOL_CACHE` and `VOL_WORK` may be **absolute host paths** instead
+of podman volume names.  `-v /abs/path:/cvmfs` is then a bind mount, so the
+store (and caches) land directly on the host filesystem.  `mspack volumes`
+creates the directories instead of calling `podman volume create` (mspack only: `multispack.sh volumes` still expects volume names).  Rootless
+podman maps container root to the invoking user, so the tree is owned by you.
+On an SELinux-enforcing host, set `SEL=:z`.
 
 ### User
 
