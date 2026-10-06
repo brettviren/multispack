@@ -12,3 +12,6 @@ envs/*/recipes
 /deploy/
 # Local spaxi checkout used by conda-export (SPAXI_SRC); clone it here yourself
 python/
+reference
+test-pixi
+envs/larsoft/repos/

@@ -1,0 +1,46 @@
+#+title multispack walkthrough from green field.
+
+This starts with the multispack git repo and podman 4.2 on Debian 12 host and =multispack-cache= from previous work to save a little time.  It mostly has a Spack buildcache.
+
+#+begin_example
+$ ./multispack.sh volumes
+
+$ podman volume ls
+DRIVER      VOLUME NAME
+local       multispack-cache
+local       multispack-cvmfs
+local       multispack-work
+
+$ ./multispack.sh images
+
+$ podman images
+REPOSITORY                           TAG         IMAGE ID      CREATED             SIZE
+localhost/multispack/sles15-devel    1           69e087cfa440  About a minute ago  140 MB
+localhost/multispack/debian13-devel  1           1dd52ecbac50  About a minute ago  105 MB
+localhost/multispack/debian12-devel  1           784d2c371b53  About a minute ago  107 MB
+localhost/multispack/alma9-devel     1           dee47adaa435  About a minute ago  224 MB
+localhost/multispack/alma8-devel     1           e8c851cfe2d6  About a minute ago  236 MB
+localhost/multispack/sles15          1           9429654dc063  2 minutes ago       123 MB
+localhost/multispack/debian13        1           37221c86681c  2 minutes ago       81.1 MB
+localhost/multispack/debian12        1           440af43b5d7a  2 minutes ago       77.9 MB
+localhost/multispack/alma9           1           1f6527c01148  2 minutes ago       200 MB
+localhost/multispack/alma8           1           c7ce066d49c4  2 minutes ago       198 MB
+localhost/multispack/builder         1           81ddb898fc5b  2 minutes ago       556 MB
+docker.io/library/almalinux          9           e85375e5caf7  22 hours ago        200 MB
+docker.io/library/almalinux          8           4f2de80ad76c  22 hours ago        198 MB
+docker.io/library/debian             13-slim     e426a54f50cc  10 days ago         81.1 MB
+docker.io/library/debian             12-slim     160466e67bb8  10 days ago         77.9 MB
+registry.suse.com/bci/bci-base       15.6        b7a46c9cca19  8 months ago        123 MB
+
+$ ./multispack.sh bootstrap
+
+$ ./multispack.sh compiler
+#+end_example
+
+The compiler ladder takes about 20 minutes on wcgpu0.
+
+#+begin_example
+$ ./multispack.sh makenv --managed envs/xerosere/spack.yaml
+#+end_example
+
+The =--managed= means the env is named and not a "directory" type.

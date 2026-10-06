@@ -1,0 +1,408 @@
+# LAYER FILE (art foundation) -- build-layered.sh; see ../spack.yaml.
+# multispack environment: the LArSoft 10.24.00 stack (LArSoft only).
+#
+# The art + nusofthep + LArSoft foundation from LArSoft's official
+# unified-spack.yaml (github.com/LArSoft/larsoft-release-configs), reduced to
+# LArSoft and INLINED.
+#
+# Why inlined rather than the official `include:` of the release-config git repos:
+# under `makenv`, Spack re-fetches git `include:`s in a pathological loop (it sat
+# re-checking-out the config repos for 14h without converging).  So the pinned
+# contents of these files are inlined verbatim instead:
+#   art-release-configs @ art-3.14.04 : gcc-12-toolchain.yaml, packages-art.yaml,
+#                                       specs-art.yaml
+#   nusofthep-release-configs @ nusofthep-3.22.01 : nusofthep-{packages,specs}.yaml
+#   larsoft-release-configs @ larsoft-10.24.00    : larsoft-{packages,specs}.yaml
+# Re-sync by re-running the assembler when those tags move.
+#
+# REMOVED from the official unified config: the DUNE/SBN/SBND/ICARUS/uBooNE/FIFE
+# release-config includes, their specs/pins/experiment-data externals; unrelated
+# top-level specs (larcv, nusystematics, snakemake, ...); and Fermilab site
+# tooling (make_spack, spack-mpd/-subspack/... extensions).
+#
+# ADDED (multispack-required): the recipe repos Fermilab clones via repos.yaml,
+# git-pinned so this file is self-contained -- INCLUDING FNAL's builtin fork,
+# which carries base packages (pandora*, marley, artg4tk, FNAL-patched
+# root/geant4) the recipes need and upstream builtin lacks; plus the
+# openblas/glibc providers.
+#
+# CONCRETIZER SPEED-UP (DUNE-only build; see PLAN.md case study).  The 44-root
+# unified solve was intractable (>1h, single-threaded clingo) AND leaked
+# x86_64_v4 (AVX-512) binaries on a v4 build host.  BOTH are fixed by:
+#   0. `reuse: false` -- THE key fix, see the concretizer: block below.  It makes
+#      the solve fast (grounds only recipes, not the ~900 store reuse candidates)
+#      AND restores the v3 target floor (with reuse on, the target requirement
+#      stops binding fresh nodes and they float up to the v4 host).  Install still
+#      reuses buildcache binaries by DAG hash, so nothing is lost at build time.
+#   1. `compiler_mixing: false` -- kept.  With reuse it was itself a blowup (4
+#      installed gccs x every reused spec); with reuse:false it is belt-and-
+#      suspenders.  Also semantically correct: the whole stack is gcc@12.
+#   2. target: the `any_of: [x86_64_v3, x86_64]` enumeration is KEPT (it was
+#      briefly dropped as a suspected hardness source -- it is not; it is what
+#      pins the v3 floor and EXCLUDES x86_64_v4, since a bare `target=x86_64_v3`
+#      is satisfied by the v4 superset and leaks AVX-512 binaries).
+#   3. py-torch / py-tensorflow (+cuda) PEELED OUT -- the CUDA ML subtree is a
+#      multispack/user GPU choice, not official; build it in a separate GPU env
+#      (cuda_arch=89 for RTX4090/L40S; A100 is 80).
+#   4. `unify: when_possible` -- DUNE/LArSoft-only, not Fermilab's cross-
+#      experiment unified solve, so one consistent set across experiments is
+#      unneeded.
+#
+# LAYERED BUILD (layers/): even with the above, ONE env holding all 44 roots
+# grounds the UNION of every root's dependency universe -- that giant grounding
+# hits every solve and never converges.  So this stack is built in three stages
+# by build-layered.sh: art (13 roots, ~47s) -> nusofthep (11, ~99s) -> larsoft
+# (20).  Each stage installs into the shared /cvmfs store, so the next stage
+# REUSES the layer below (pruning the search the larsoft layer would otherwise
+# choke on).  This file is the canonical/reference manifest; layers/*.spack.yaml
+# are the same config with the specs list narrowed to one layer.
+#
+# Compiler: the `build_compiler` toolchain (from art) resolves %build_compiler to
+# gcc@12.  multispack does not ship gcc@12; Spack BUILDS gcc@12.5.0 as a build
+# dependency and the whole stack compiles with it, shipping gcc-runtime@12.5.0 --
+# within the Strategy B contract, just a different toolchain than the validated gcc@15.
+spack:
+  config:
+    deprecated: true
+  toolchains:
+    build_compiler:
+    - spec: '%c=gcc@12'
+      when: '%c'
+    - spec: '%cxx=gcc@12'
+      when: '%cxx'
+    - spec: '%fortran=gcc@12'
+      when: '%fortran'
+  definitions:
+  - specs_art:
+    - art %build_compiler
+    - art-root-io %build_compiler
+    - canvas %build_compiler
+    - canvas-root-io %build_compiler
+    - cetlib %build_compiler
+    - cetlib-except %build_compiler
+    - cetmodules %build_compiler
+    - critic %build_compiler
+    - fhicl-cpp %build_compiler
+    - gallery %build_compiler
+    - hep-concurrency %build_compiler
+    - ifdh-art %build_compiler
+    - messagefacility %build_compiler
+  - specs_nusofthep:
+    - dk2nudata %build_compiler
+    - dk2nugenie %build_compiler
+    - geant4 %build_compiler
+    - geant4reweight %build_compiler
+    - nuevdb %build_compiler
+    - nufinder
+    - nug4 %build_compiler
+    - nugen %build_compiler
+    - nurandom %build_compiler
+    - nusimdata %build_compiler
+    - nutools %build_compiler
+  - specs_larsoft:
+    - larana %build_compiler
+    - larcore %build_compiler
+    - larcorealg %build_compiler
+    - larcoreobj %build_compiler
+    - lardata %build_compiler
+    - lardataalg %build_compiler
+    - lardataobj %build_compiler
+    - lareventdisplay %build_compiler
+    - larevt %build_compiler
+    - larexamples %build_compiler
+    - larg4 %build_compiler
+    - larpandora %build_compiler
+    - larpandoracontent %build_compiler
+    - larreco %build_compiler
+    # larrecodnn / larsimdnn DEFERRED: they unconditionally pull the heavy
+    # from-source ML/inference stack (py-torch, torch-scatter, triton
+    # inference-server client) plus optional py-tensorflow -- each a long/fragile
+    # build on glibc-2.28.  Build them in a separate DNN+GPU env (cuda_arch=89)
+    # layered on top of this core.  (These are individual roots here, NOT pulled
+    # by a bare `larsoft` meta, so dropping them removes the whole ML subtree.)
+    #   - larrecodnn %build_compiler
+    - larsim %build_compiler
+    #   - larsimdnn %build_compiler
+    - larsimrad %build_compiler
+    - larwirecell %build_compiler
+  repos:
+    larsoft:
+      git: https://github.com/LArSoft/larsoft-spack-recipes.git
+      branch: main
+      paths:
+      - spack_repo/larsoft
+    # nusofthep: a LOCAL patched clone (envs/larsoft/repos/nusofthep-spack-recipes
+    # @ spack-v1.0) rather than the upstream git, carrying a fix to dk2nugenie:
+    # its genie/CMakeLists.txt does `find_library(XML2 xml2 PATHS
+    # ${LIBXML2_FQ_DIR}/lib NO_DEFAULT_PATH)`, but the recipe never set
+    # LIBXML2_FQ_DIR, so XML2 -> NOTFOUND when libxml2 is a Spack build (non-OS
+    # prefix).  The clone adds `define("LIBXML2_FQ_DIR", libxml2.prefix)`.
+    # Mounted at $CVMFS_ROOT/repos by `makenv --repos envs/larsoft/repos`
+    # (build-layered.sh passes it).  Re-sync by re-pulling the clone.
+    nusofthep: /cvmfs/multispack.example.org/repos/nusofthep-spack-recipes/spack_repo/nusofthep
+    fnal_art:
+      git: https://github.com/FNALssi/fnal_art.git
+      branch: develop
+      paths:
+      - spack_repo/fnal_art
+    wirecell:
+      git: https://github.com/WireCell/wire-cell-spack.git
+      branch: master
+      paths:
+      - spack_repo/wirecell
+    builtin:
+      git: https://github.com/FNALssi/spack-packages.git
+      branch: fnal-develop
+      paths:
+      - repos/spack_repo/builtin
+  specs:
+  - $specs_art
+  concretizer:
+    # reuse:false is REQUIRED here, for TWO reasons (see PLAN.md case study):
+    #  (1) v3 floor: with reuse:true the multispack store's ~900 reuse candidates
+    #      make the `target=x86_64_v3` requirement stop binding fresh nodes, which
+    #      then float up to the x86_64_v4 build host (AVX-512 -> breaks v3 hosts).
+    #      With reuse:false every compiled node honors the v3 pin.
+    #  (2) speed: reuse:true grounds all ~900 candidates (huge, slow); reuse:false
+    #      grounds only the recipe universe -- the larsoft layer solves in ~80s.
+    # Install still fetches matching binaries from the buildcache by DAG hash, so
+    # this costs concretization-time reuse, not build-time reuse.
+    reuse: false
+    compiler_mixing: false
+    unify: when_possible
+  view: false
+  packages:
+    art:
+      require:
+      - '@=3.14.04'
+    art-root-io:
+      require:
+      - '@=1.13.06'
+    canvas:
+      require:
+      - '@=3.16.04'
+    canvas-root-io:
+      require:
+      - '@=1.13.06'
+    cetlib:
+      require:
+      - '@=3.18.02'
+    cetlib-except:
+      require:
+      - '@=1.09.01'
+    cetmodules:
+      require:
+      - '@3'
+    critic:
+      require:
+      - '@=2.13.06'
+    messagefacility:
+      require:
+      - '@=2.10.05'
+    fhicl-cpp:
+      require:
+      - '@=4.18.04'
+    gallery:
+      require:
+      - '@=1.22.06'
+    ifdh-art:
+      require:
+      - '@=2.17.08'
+    hep-concurrency:
+      require:
+      - '@=1.09.02'
+    clhep:
+      require:
+      - '@=2.4.7.1'
+    ifbeam:
+      require:
+      - '@=2.6.3'
+    ifdhc:
+      require:
+      - '@=2.8.0'
+    ifdhc-config:
+      require:
+      - '@=2.8.0'
+    nucondb:
+      require:
+      - '@=2.6.3'
+    root:
+      require:
+      - '@=6.28.12'
+      - +xrootd
+    # root +opengl pulls mesa +llvm, which needs a `libllvm` provider.  The
+    # concretizer defaults to llvm-amdgpu (huge, AMD-GPU-only, and fails to build
+    # against glibc-2.28's libstdc++).  Force mesa's libllvm edge to plain `llvm`.
+    # (A `providers: libllvm: [llvm]` preference is too weak to override; and mesa
+    # ~llvm is not a workaround -- FNAL's builtin-fork mesa recipe still emits
+    # gallium `swrast`, which requires llvmpipe -> LLVM, failing a different way.)
+    mesa:
+      require:
+      - '^[virtuals=libllvm] llvm'
+    tbb:
+      require:
+      - builtin.intel-oneapi-tbb
+    artdaq-core:
+      require:
+      - '@v3_11_01'
+      - ~bundle
+    cry:
+      require:
+      - '@=1.7'
+    geant4:
+      require:
+      - '@11.2.2'
+      - ~qt
+      - build_type=RelWithDebInfo
+      - generator=ninja
+      - cxxstd=17
+    nug4:
+      require:
+      - '@=1.17.03'
+    nugen:
+      require:
+      - '@=1.23.04'
+    nurandom:
+      require:
+      - '@=1.11.06'
+    nusimdata:
+      require:
+      - '@=1.29.03'
+    nutools:
+      require:
+      - '@=3.22.01'
+    # py-tensorflow + triton (inference-server client) came ONLY via the deferred
+    # DNN packages (larrecodnn/larsimdnn) -> gone.  But py-torch is UNAVOIDABLE:
+    # larpandora and larpandoracontent (core Pandora reco) hard-depend on it, as
+    # does wire-cell-toolkit +torch.  Pin it CPU (~cuda: no CUDA toolkit in the
+    # builder) and ~mkldnn (drop the intel-oneapi-mkl subtree, as in the xerosere
+    # env).  The GPU/DNN env (py-tensorflow@2.17, triton, +cuda cuda_arch=89) is a
+    # separate layer on top.
+    py-torch:
+      require:
+      - '@2.7:'
+      - ~cuda
+      - ~mkldnn
+    nufinder:
+      require:
+      - '@1.03.01'
+    larana:
+      require:
+      - '@=10.02.09'
+    larcore:
+      require:
+      - '@=10.00.06'
+    larcorealg:
+      require:
+      - '@=10.00.06'
+    larcoreobj:
+      require:
+      - '@=10.00.03'
+    lardata:
+      require:
+      - '@=10.00.19'
+    lardataalg:
+      require:
+      - '@=10.02.04'
+    lardataobj:
+      require:
+      - '@=10.05.03'
+    lareventdisplay:
+      require:
+      - '@=10.01.09'
+    larevt:
+      require:
+      - '@=10.00.22'
+    larexamples:
+      require:
+      - '@=10.02.04'
+    larg4:
+      require:
+      - '@=10.20.06'
+    larpandora:
+      require:
+      - '@=10.05.01'
+    larpandoracontent:
+      require:
+      - '@=05.04.00'
+    larreco:
+      require:
+      - '@=10.06.09'
+    larrecodnn:
+      require:
+      - '@=10.05.01'
+    larsim:
+      require:
+      - '@=10.21.00'
+    larsimdnn:
+      require:
+      - '@=10.02.06'
+    larsimrad:
+      require:
+      - '@=10.01.08'
+    larsoft:
+      require:
+      - '@=10.24.00'
+    larwirecell:
+      require:
+      - '@=10.04.00'
+    larvecutils:
+      require:
+      - '@=09.04.04'
+    larfinder:
+      require:
+      - '@develop'
+    pandorapfa:
+      require:
+      - '@=5.1.0'
+    pandorasdk:
+      require:
+      - '@=5.0.0'
+    artg4tk:
+      # the fnal_art recipe tags this v13_00_00 -> spack version 13.00.00 (the
+      # inlined '@=13.0.1' matched no version -> "Will not fetch").
+      require:
+      - '@=13.00.00'
+    marley:
+      require:
+      - '@=1.2.1'
+    wire-cell-toolkit:
+      require:
+      - '@=0.37.1'
+    all:
+      require:
+      # Pin the microarch to the v3 floor.  This MUST be the any_of enumeration,
+      # NOT a bare `target=x86_64_v3`: a bare require is *satisfied* by x86_64_v4
+      # (a superset), so the concretizer optimizes fresh builds up to the v4 host
+      # and ships AVX-512 binaries that break v3-only hosts.  any_of enumerates
+      # the allowed targets (v3 preferred, base x86_64 fallback) and excludes v4.
+      # (Same form multispack uses everywhere, e.g. the xerosere env; it is NOT a
+      # concretizer-hardness source -- compiler_mixing:false is what fixed that.)
+      - any_of:
+        - target=x86_64_v3
+        - target=x86_64
+      providers:
+        libc:
+        - glibc
+        zlib-api:
+        - zlib
+        libllvm:
+        - llvm
+      variants:
+      - generator=ninja
+      - build_type=Release
+      - cxxstd=17
+    python:
+      require:
+      - '@:3.11'
+    cuda:
+      require:
+      - '@12.6'
+    grpc:
+      require:
+      - build_type=RelWithDebInfo
+      - generator=ninja
+      - cxxstd=17
+    trace:
+      require:
+      - '@:v3_23_00'
